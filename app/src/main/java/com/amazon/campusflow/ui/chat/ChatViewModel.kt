@@ -39,10 +39,11 @@ class ChatViewModel(private val dao: ChatMessageDao, private val scheduleDao: Sc
         "gemini-3.1-pro-preview"
     )
     private var currentModelIndex = 0
+    private var currentScheduleContext = "Loading schedule..."
 
-    private var generativeModel = createGenerativeModel(availableModels[currentModelIndex])
+    private var generativeModel = createGenerativeModel(availableModels[currentModelIndex], currentScheduleContext)
 
-    private fun createGenerativeModel(modelName: String): GenerativeModel {
+    private fun createGenerativeModel(modelName: String, scheduleContext: String): GenerativeModel {
         return GenerativeModel(
             modelName = modelName,
             apiKey = BuildConfig.GEMINI_API_KEY,
@@ -56,6 +57,13 @@ class ChatViewModel(private val dao: ChatMessageDao, private val scheduleDao: Sc
                 text("""
 You are CampusFlow, a highly intelligent, friendly AI assistant designed for university students.
 You help students manage their schedules.
+
+If a student asks about their schedule or classes, answer naturally using the following context about their classes.
+If they have no classes scheduled, inform them politely.
+---
+CURRENT SCHEDULE CONTEXT:
+$scheduleContext
+---
 
 If a student wants to add a class to their schedule, you must gather these exactly 6 pieces of information:
 1. Course Name
@@ -91,7 +99,7 @@ Do not output the JSON block until you have all 6 pieces of info!
     private fun switchToNextModel(): Boolean {
         if (currentModelIndex < availableModels.size - 1) {
             currentModelIndex++
-            generativeModel = createGenerativeModel(availableModels[currentModelIndex])
+            generativeModel = createGenerativeModel(availableModels[currentModelIndex], currentScheduleContext)
             chatSession = null // Force recreation of chat session with the new model
             return true
         }
@@ -109,6 +117,17 @@ Do not output the JSON block until you have all 6 pieces of info!
 
     private suspend fun getOrCreateChatSession(): Chat {
         return chatSession ?: withContext(Dispatchers.IO) {
+            val events = scheduleDao.getAllEvents()
+            currentScheduleContext = if (events.isEmpty()) {
+                "The student currently has no classes scheduled."
+            } else {
+                "The student has ${events.size} class(es) scheduled:\n" + events.joinToString("\n") { 
+                    "- ${it.courseName} on ${it.dayOfWeek} at ${it.startTime} in ${it.location}"
+                }
+            }
+
+            generativeModel = createGenerativeModel(availableModels[currentModelIndex], currentScheduleContext)
+            
             val history = dao.getMessagesSnapshot().map { msg ->
                 content(role = if (msg.isFromUser) "user" else "model") {
                     text(msg.text)
@@ -147,6 +166,7 @@ Do not output the JSON block until you have all 6 pieces of info!
                     val botMsg = ChatMessage(text = "Awesome! I have parsed your schedule from $startDate to $endDate and set up your class reminders. You'll get a notification 15 minutes before each class!", isFromUser = false)
                     dao.insertMessage(botMsg)
                     pendingSchedule = null
+                    chatSession = null // Invalidate session to reload context with new schedule
                     return@launch
                 } else {
                     val userMsg = ChatMessage(text = text.trim(), isFromUser = true)
@@ -212,6 +232,8 @@ Do not output the JSON block until you have all 6 pieces of info!
                                     if (cleanReply.isBlank()) {
                                         cleanReply = "Class scheduled successfully! You'll get an alert 15 minutes before."
                                     }
+                                    
+                                    chatSession = null // Invalidate session to reload context with new class
                                 }
                             } catch (e: Exception) {
                                 Log.e("ChatViewModel", "Error parsing schedule intent", e)
