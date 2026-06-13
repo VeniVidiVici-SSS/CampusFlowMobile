@@ -153,6 +153,106 @@ object AlarmScheduler {
         }
     }
 
+    fun cancelAlarmsForEvents(context: Context, event: ScheduleEvent) {
+        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val timeFormat12 = SimpleDateFormat("hh:mm a", Locale.getDefault())
+        val timeFormat24 = SimpleDateFormat("HH:mm", Locale.getDefault())
+
+        try {
+            val currentCal = Calendar.getInstance()
+            currentCal.add(Calendar.DAY_OF_YEAR, -30)
+            val endCal = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, 365) }
+
+            while (currentCal.before(endCal)) {
+                val dayOfWeekInt = currentCal.get(Calendar.DAY_OF_WEEK)
+                val dayOfWeekString = getDayString(dayOfWeekInt)
+
+                if (event.dayOfWeek.equals(dayOfWeekString, ignoreCase = true)) {
+                    val timeDate = try { timeFormat12.parse(event.startTime) } catch (e: Exception) { null } 
+                                   ?: try { timeFormat24.parse(event.startTime) } catch (e: Exception) { null }
+                    if (timeDate != null) {
+                        val timeCal = Calendar.getInstance().apply { time = timeDate }
+                        val alarmCal = Calendar.getInstance().apply {
+                            timeInMillis = currentCal.timeInMillis
+                            set(Calendar.HOUR_OF_DAY, timeCal.get(Calendar.HOUR_OF_DAY))
+                            set(Calendar.MINUTE, timeCal.get(Calendar.MINUTE))
+                            set(Calendar.SECOND, 0)
+                            add(Calendar.MINUTE, -15)
+                        }
+
+                        val intent = Intent(context, NotificationReceiver::class.java).apply {
+                            putExtra("COURSE_NAME", event.courseName)
+                            putExtra("LOCATION", event.location)
+                        }
+                        val requestCode = (event.courseName.hashCode() + alarmCal.timeInMillis).toInt()
+                        
+                        val pendingIntent = PendingIntent.getBroadcast(
+                            context,
+                            requestCode,
+                            intent,
+                            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+                        )
+                        alarmManager.cancel(pendingIntent)
+                        pendingIntent.cancel()
+                    }
+                }
+                currentCal.add(Calendar.DAY_OF_YEAR, 1)
+            }
+        } catch (e: Exception) {
+            Log.e("AlarmScheduler", "Error canceling alarms", e)
+        }
+    }
+
+    fun cancelAlarmsForMessMenus(context: Context, event: MessMenuEvent) {
+        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val timeFormat12 = SimpleDateFormat("hh:mm a", Locale.getDefault())
+        val timeFormat24 = SimpleDateFormat("HH:mm", Locale.getDefault())
+
+        try {
+            val currentCal = Calendar.getInstance()
+            currentCal.add(Calendar.DAY_OF_YEAR, -30)
+            val endCal = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, 365) }
+
+            while (currentCal.before(endCal)) {
+                val dayOfWeekInt = currentCal.get(Calendar.DAY_OF_WEEK)
+                val dayOfWeekString = getDayString(dayOfWeekInt)
+
+                if (event.dayOfWeek.equals(dayOfWeekString, ignoreCase = true)) {
+                    val timeDate = try { timeFormat12.parse(event.time) } catch (e: Exception) { null } 
+                                   ?: try { timeFormat24.parse(event.time) } catch (e: Exception) { null }
+                    if (timeDate != null) {
+                        val timeCal = Calendar.getInstance().apply { time = timeDate }
+                        val alarmCal = Calendar.getInstance().apply {
+                            timeInMillis = currentCal.timeInMillis
+                            set(Calendar.HOUR_OF_DAY, timeCal.get(Calendar.HOUR_OF_DAY))
+                            set(Calendar.MINUTE, timeCal.get(Calendar.MINUTE))
+                            set(Calendar.SECOND, 0)
+                            add(Calendar.MINUTE, -15)
+                        }
+
+                        val intent = Intent(context, NotificationReceiver::class.java).apply {
+                            putExtra("COURSE_NAME", "Mess: ${event.mealType}")
+                            putExtra("LOCATION", "Mess")
+                        }
+                        val requestCode = ("Mess${event.mealType}".hashCode() + alarmCal.timeInMillis).toInt()
+                        
+                        val pendingIntent = PendingIntent.getBroadcast(
+                            context,
+                            requestCode,
+                            intent,
+                            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+                        )
+                        alarmManager.cancel(pendingIntent)
+                        pendingIntent.cancel()
+                    }
+                }
+                currentCal.add(Calendar.DAY_OF_YEAR, 1)
+            }
+        } catch (e: Exception) {
+            Log.e("AlarmScheduler", "Error canceling mess menu alarms", e)
+        }
+    }
+
     private fun getDayString(day: Int): String {
         return when (day) {
             Calendar.SUNDAY -> "Sunday"

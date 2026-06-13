@@ -82,6 +82,8 @@ CRITICAL CONVERSATIONAL RULES:
 - If information is missing, you MUST ask for EVERY SINGLE PIECE of missing information together in a SINGLE message. Do not ask for details one-by-one, as this wastes chat turns!
 - Frame the request for missing info naturally. For example, instead of a robotic bulleted list, say: "Got it! To finish scheduling, could you tell me what room that is in, and what dates the semester starts and ends?"
 - Do NOT ask for an end time for the class/meal.
+- To DELETE a class or menu, ask for the Course Name/Meal Type and Day.
+- To UPDATE a class or menu, you MUST output a DELETE intent for the old item, and then immediately output a SCHEDULE intent for the new item in the same message!
 
 Once you have ALL details for a CLASS, output a secret block at the end:
 ```json
@@ -104,6 +106,24 @@ Once you have ALL details for a MESS MENU, output a secret block at the end:
   "dayOfWeek": "...",
   "time": "...",
   "menu": "..."
+}
+```
+
+To DELETE a CLASS, output:
+```json
+{
+  "intent": "delete_class",
+  "courseName": "...",
+  "dayOfWeek": "..."
+}
+```
+
+To DELETE a MESS MENU, output:
+```json
+{
+  "intent": "delete_mess_menu",
+  "mealType": "...",
+  "dayOfWeek": "..."
 }
 ```
 Do not output the JSON block until you have ALL info gathered!
@@ -242,71 +262,87 @@ Do not output the JSON block until you have all 6 pieces of info!
                     response.text?.let { reply ->
                         var cleanReply = reply
                         
-                        // Intercept JSON block robustly
-                        val intentClassIdx = reply.indexOf("\"intent\": \"schedule_class\"")
-                        val intentMessIdx = reply.indexOf("\"intent\": \"schedule_mess_menu\"")
-                        val intentIdx = if (intentClassIdx != -1) intentClassIdx else intentMessIdx
+                        // Intercept JSON blocks robustly with regex
+                        val intentRegex = """\{[\s\S]*?"intent"\s*:\s*"([^"]+)"[\s\S]*?\}""".toRegex()
+                        val matches = intentRegex.findAll(reply).toList()
                         
-                        if (intentIdx != -1) {
+                        if (matches.isNotEmpty()) {
                             try {
-                                val jsonStart = reply.lastIndexOf("{", intentIdx)
-                                val jsonEnd = reply.indexOf("}", intentIdx) + 1
-                                if (jsonStart != -1 && jsonEnd > jsonStart) {
-                                    val jsonString = reply.substring(jsonStart, jsonEnd).trim()
+                                for (match in matches) {
+                                    val jsonString = match.value
                                     val jsonObject = org.json.JSONObject(jsonString)
                                     val intentType = jsonObject.getString("intent")
                                     
-                                    if (intentType == "schedule_class") {
-                                        val courseName = jsonObject.getString("courseName")
-                                        val dayOfWeek = jsonObject.getString("dayOfWeek")
-                                        val startTime = jsonObject.getString("startTime")
-                                        val location = jsonObject.getString("location")
-                                        val startDateStr = jsonObject.getString("startDate")
-                                        val endDateStr = jsonObject.getString("endDate")
-                                        
-                                        val event = ScheduleEvent(
-                                            courseName = courseName,
-                                            dayOfWeek = dayOfWeek,
-                                            startTime = startTime,
-                                            location = location,
-                                            startDateMillis = 0L,
-                                            endDateMillis = 0L
-                                        )
-                                        scheduleDao.insertAll(listOf(event))
-                                        AlarmScheduler.scheduleAlarmsForEvents(context, listOf(event), startDateStr, endDateStr)
-                                        
-                                        if (cleanReply.isBlank() || cleanReply.replace("```json", "").replace("```", "").trim().isEmpty()) {
-                                            cleanReply = "Class scheduled successfully! You'll get an alert 15 minutes before."
+                                    when (intentType) {
+                                        "schedule_class" -> {
+                                            val courseName = jsonObject.getString("courseName")
+                                            val dayOfWeek = jsonObject.getString("dayOfWeek")
+                                            val startTime = jsonObject.getString("startTime")
+                                            val location = jsonObject.getString("location")
+                                            val startDateStr = jsonObject.getString("startDate")
+                                            val endDateStr = jsonObject.getString("endDate")
+                                            
+                                            val event = ScheduleEvent(
+                                                courseName = courseName,
+                                                dayOfWeek = dayOfWeek,
+                                                startTime = startTime,
+                                                location = location,
+                                                startDateMillis = 0L,
+                                                endDateMillis = 0L
+                                            )
+                                            scheduleDao.insertAll(listOf(event))
+                                            AlarmScheduler.scheduleAlarmsForEvents(context, listOf(event), startDateStr, endDateStr)
                                         }
-                                    } else if (intentType == "schedule_mess_menu") {
-                                        val mealType = jsonObject.getString("mealType")
-                                        val dayOfWeek = jsonObject.getString("dayOfWeek")
-                                        val time = jsonObject.getString("time")
-                                        val menu = jsonObject.getString("menu")
-                                        val startMillis = System.currentTimeMillis()
-                                        
-                                        val event = MessMenuEvent(
-                                            mealType = mealType,
-                                            dayOfWeek = dayOfWeek,
-                                            time = time,
-                                            menuItems = menu,
-                                            startDateMillis = startMillis
-                                        )
-                                        messMenuDao.insertAll(listOf(event))
-                                        AlarmScheduler.scheduleAlarmsForMessMenus(context, listOf(event), startMillis)
-                                        
-                                        if (cleanReply.isBlank() || cleanReply.replace("```json", "").replace("```", "").trim().isEmpty()) {
-                                            cleanReply = "Mess menu for $mealType scheduled successfully! You'll get an alert 15 minutes before."
+                                        "schedule_mess_menu" -> {
+                                            val mealType = jsonObject.getString("mealType")
+                                            val dayOfWeek = jsonObject.getString("dayOfWeek")
+                                            val time = jsonObject.getString("time")
+                                            val menu = jsonObject.getString("menu")
+                                            val startMillis = System.currentTimeMillis()
+                                            
+                                            val event = MessMenuEvent(
+                                                mealType = mealType,
+                                                dayOfWeek = dayOfWeek,
+                                                time = time,
+                                                menuItems = menu,
+                                                startDateMillis = startMillis
+                                            )
+                                            messMenuDao.insertAll(listOf(event))
+                                            AlarmScheduler.scheduleAlarmsForMessMenus(context, listOf(event), startMillis)
+                                        }
+                                        "delete_class" -> {
+                                            val courseName = jsonObject.getString("courseName")
+                                            val dayOfWeek = jsonObject.getString("dayOfWeek")
+                                            val event = scheduleDao.getEvent(courseName, dayOfWeek)
+                                            if (event != null) {
+                                                AlarmScheduler.cancelAlarmsForEvents(context, event)
+                                                scheduleDao.deleteEvent(courseName, dayOfWeek)
+                                            }
+                                        }
+                                        "delete_mess_menu" -> {
+                                            val mealType = jsonObject.getString("mealType")
+                                            val dayOfWeek = jsonObject.getString("dayOfWeek")
+                                            val event = messMenuDao.getEvent(mealType, dayOfWeek)
+                                            if (event != null) {
+                                                AlarmScheduler.cancelAlarmsForMessMenus(context, event)
+                                                messMenuDao.deleteEvent(mealType, dayOfWeek)
+                                            }
                                         }
                                     }
-                                    
-                                    // Clean the reply
-                                    val beforeJson = reply.substring(0, jsonStart)
-                                    val afterJson = if (reply.length > jsonEnd) reply.substring(jsonEnd) else ""
-                                    cleanReply = (beforeJson + afterJson).replace("```json", "").replace("```", "").trim()
-                                    
-                                    chatSession = null // Invalidate session to reload context
                                 }
+                                
+                                // Strip JSON from cleanReply
+                                var strippedReply = reply
+                                for (match in matches) {
+                                    strippedReply = strippedReply.replace(match.value, "")
+                                }
+                                cleanReply = strippedReply.replace("```json", "").replace("```", "").trim()
+                                
+                                if (cleanReply.isBlank()) {
+                                    cleanReply = "Done! I've updated your schedule."
+                                }
+                                
+                                chatSession = null // Invalidate session to reload context
                             } catch (e: Exception) {
                                 Log.e("ChatViewModel", "Error parsing schedule intent", e)
                             }
