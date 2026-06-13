@@ -19,6 +19,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.platform.LocalContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -28,6 +31,15 @@ fun ChatScreen(
 ) {
     val messages by viewModel.messages.collectAsState()
     var inputText by remember { mutableStateOf("") }
+    val context = LocalContext.current
+    
+    val launcher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri ->
+        uri?.let {
+            viewModel.processScheduleFile(context, it)
+        }
+    }
 
     Column(modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         CenterAlignedTopAppBar(
@@ -52,11 +64,11 @@ fun ChatScreen(
             inputText = inputText,
             onTextChange = { inputText = it },
             onSend = {
-                viewModel.sendMessage(inputText)
+                viewModel.sendMessage(context, inputText)
                 inputText = ""
             },
             onAttachClick = {
-                // TODO: Open file picker for PDF/Image
+                launcher.launch("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
             }
         )
     }

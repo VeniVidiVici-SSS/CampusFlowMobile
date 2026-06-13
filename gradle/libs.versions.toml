@@ -11,6 +11,7 @@ composeBom = "2026.02.01"
 room = "2.6.1"
 ksp = "2.2.10-2.0.2"
 generativeai = "0.9.0"
+poi = "5.2.3"
 
 [libraries]
 google-generativeai = { group = "com.google.ai.client.generativeai", name = "generativeai", version.ref = "generativeai" }
@@ -33,6 +34,8 @@ androidx-compose-material-icons-extended = { group = "androidx.compose.material"
 androidx-room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "room" }
 androidx-room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }
 androidx-room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
+apache-poi = { group = "org.apache.poi", name = "poi", version.ref = "poi" }
+apache-poi-ooxml = { group = "org.apache.poi", name = "poi-ooxml", version.ref = "poi" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

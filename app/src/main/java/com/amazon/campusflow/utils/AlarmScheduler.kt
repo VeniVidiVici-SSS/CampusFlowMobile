@@ -1,0 +1,98 @@
+package com.amazon.campusflow.utils
+
+import android.app.AlarmManager
+import android.app.PendingIntent
+import android.content.Context
+import android.content.Intent
+import android.util.Log
+import com.amazon.campusflow.data.ScheduleEvent
+import com.amazon.campusflow.notifications.NotificationReceiver
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Locale
+
+object AlarmScheduler {
+    fun scheduleAlarmsForEvents(context: Context, events: List<ScheduleEvent>, startDateStr: String, endDateStr: String) {
+        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+        val timeFormat12 = SimpleDateFormat("hh:mm a", Locale.getDefault()) // 10:00 AM
+        val timeFormat24 = SimpleDateFormat("HH:mm", Locale.getDefault()) // 21:15
+
+        try {
+            val startDate = dateFormat.parse(startDateStr) ?: return
+            val endDate = dateFormat.parse(endDateStr) ?: return
+
+            val currentCal = Calendar.getInstance().apply { time = startDate }
+            val endCal = Calendar.getInstance().apply { time = endDate }
+
+            while (currentCal.before(endCal) || currentCal.timeInMillis == endCal.timeInMillis) {
+                val dayOfWeekInt = currentCal.get(Calendar.DAY_OF_WEEK)
+                val dayOfWeekString = getDayString(dayOfWeekInt)
+
+                for (event in events) {
+                    if (event.dayOfWeek.equals(dayOfWeekString, ignoreCase = true)) {
+                        try {
+                            val timeDate = try { timeFormat12.parse(event.startTime) } catch (e: Exception) { null } 
+                                           ?: try { timeFormat24.parse(event.startTime) } catch (e: Exception) { null }
+                            if (timeDate != null) {
+                                val timeCal = Calendar.getInstance().apply { time = timeDate }
+                                val alarmCal = Calendar.getInstance().apply {
+                                    timeInMillis = currentCal.timeInMillis
+                                    set(Calendar.HOUR_OF_DAY, timeCal.get(Calendar.HOUR_OF_DAY))
+                                    set(Calendar.MINUTE, timeCal.get(Calendar.MINUTE))
+                                    set(Calendar.SECOND, 0)
+                                    // Subtract 15 minutes for the alarm
+                                    add(Calendar.MINUTE, -15)
+                                }
+
+                                // If alarm time is in the future, schedule it
+                                if (alarmCal.timeInMillis > System.currentTimeMillis()) {
+                                    val intent = Intent(context, NotificationReceiver::class.java).apply {
+                                        putExtra("COURSE_NAME", event.courseName)
+                                        putExtra("LOCATION", event.location)
+                                    }
+                                    // Use a unique ID for each alarm based on event + time
+                                    val requestCode = (event.courseName.hashCode() + alarmCal.timeInMillis).toInt()
+                                    val pendingIntent = PendingIntent.getBroadcast(
+                                        context,
+                                        requestCode,
+                                        intent,
+                                        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+                                    )
+
+                                    try {
+                                        alarmManager.setExactAndAllowWhileIdle(
+                                            AlarmManager.RTC_WAKEUP,
+                                            alarmCal.timeInMillis,
+                                            pendingIntent
+                                        )
+                                    } catch (e: SecurityException) {
+                                        Log.e("AlarmScheduler", "Exact alarm permission missing", e)
+                                    }
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.e("AlarmScheduler", "Error parsing time: ${event.startTime}", e)
+                        }
+                    }
+                }
+                currentCal.add(Calendar.DAY_OF_YEAR, 1)
+            }
+        } catch (e: Exception) {
+            Log.e("AlarmScheduler", "Error scheduling alarms", e)
+        }
+    }
+
+    private fun getDayString(day: Int): String {
+        return when (day) {
+            Calendar.SUNDAY -> "Sunday"
+            Calendar.MONDAY -> "Monday"
+            Calendar.TUESDAY -> "Tuesday"
+            Calendar.WEDNESDAY -> "Wednesday"
+            Calendar.THURSDAY -> "Thursday"
+            Calendar.FRIDAY -> "Friday"
+            Calendar.SATURDAY -> "Saturday"
+            else -> ""
+        }
+    }
+}
