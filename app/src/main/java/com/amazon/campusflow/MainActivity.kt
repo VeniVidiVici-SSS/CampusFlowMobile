@@ -36,7 +36,8 @@ class MainActivity : ComponentActivity() {
         val database = AppDatabase.getDatabase(this)
         val dao = database.chatMessageDao()
         val scheduleDao = database.scheduleDao()
-        val factory = ChatViewModelFactory(dao, scheduleDao)
+        val messMenuDao = database.messMenuDao()
+        val factory = ChatViewModelFactory(dao, scheduleDao, messMenuDao)
 
         enableEdgeToEdge()
         setContent {

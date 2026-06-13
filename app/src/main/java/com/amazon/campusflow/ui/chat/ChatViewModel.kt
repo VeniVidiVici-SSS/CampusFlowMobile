@@ -23,11 +23,17 @@ import android.content.Context
 import android.net.Uri
 import com.amazon.campusflow.data.ScheduleDao
 import com.amazon.campusflow.data.ScheduleEvent
+import com.amazon.campusflow.data.MessMenuDao
+import com.amazon.campusflow.data.MessMenuEvent
 import com.amazon.campusflow.utils.AlarmScheduler
 import com.amazon.campusflow.utils.ExcelParser
 import java.util.regex.Pattern
 
-class ChatViewModel(private val dao: ChatMessageDao, private val scheduleDao: ScheduleDao) : ViewModel() {
+class ChatViewModel(
+    private val dao: ChatMessageDao, 
+    private val scheduleDao: ScheduleDao,
+    private val messMenuDao: MessMenuDao
+) : ViewModel() {
 
     private var pendingSchedule: List<ScheduleEvent>? = null
 
@@ -58,14 +64,49 @@ class ChatViewModel(private val dao: ChatMessageDao, private val scheduleDao: Sc
 You are CampusFlow, a highly intelligent, friendly AI assistant designed for university students.
 You help students manage their schedules.
 
-If a student asks about their schedule or classes, answer naturally using the following context about their classes.
-If they have no classes scheduled, inform them politely.
+If a student asks about their schedule, classes, OR mess menu, answer naturally using the following context.
+If they have no classes or menus scheduled, inform them politely.
 ---
-CURRENT SCHEDULE CONTEXT:
+CURRENT SCHEDULE AND MENU CONTEXT:
 $scheduleContext
 ---
 
-If a student wants to add a class to their schedule, you must gather these exactly 6 pieces of information:
+If a student wants to add a class to their schedule, you must gather 6 pieces of information: Course Name, Day of the week, Start Time, Location, Schedule Start Date (YYYY-MM-DD), and Schedule End Date (YYYY-MM-DD).
+
+If a student wants to add a mess menu or food timing, you must gather 4 pieces of information: Meal Type (e.g. Breakfast/Lunch/Dinner), Day of the week, Time, and Menu.
+
+CRITICAL CONVERSATIONAL RULES:
+- The user will speak in natural language (e.g., "I have DSA on Monday at 10 PM in Hall A"). Extract the data yourself!
+- DO NOT force the user to use a specific format for time or dates. 
+- If the user provides a 12-hour time (like "10 PM"), YOU must silently convert it to 24-hour HH:mm format (e.g. "22:00") for the JSON block. Do not ask the user to format it.
+- If information is missing, you MUST ask for EVERY SINGLE PIECE of missing information together in a SINGLE message. Do not ask for details one-by-one, as this wastes chat turns!
+- Frame the request for missing info naturally. For example, instead of a robotic bulleted list, say: "Got it! To finish scheduling, could you tell me what room that is in, and what dates the semester starts and ends?"
+- Do NOT ask for an end time for the class/meal.
+
+Once you have ALL details for a CLASS, output a secret block at the end:
+```json
+{
+  "intent": "schedule_class",
+  "courseName": "...",
+  "dayOfWeek": "...",
+  "startTime": "...",
+  "location": "...",
+  "startDate": "...",
+  "endDate": "..."
+}
+```
+
+Once you have ALL details for a MESS MENU, output a secret block at the end:
+```json
+{
+  "intent": "schedule_mess_menu",
+  "mealType": "...",
+  "dayOfWeek": "...",
+  "time": "...",
+  "menu": "..."
+}
+```
+Do not output the JSON block until you have ALL info gathered!
 1. Course Name
 2. Day of the week (e.g. Saturday)
 3. Start Time (MUST be in HH:mm 24-hour format)
@@ -117,14 +158,18 @@ Do not output the JSON block until you have all 6 pieces of info!
 
     private suspend fun getOrCreateChatSession(): Chat {
         return chatSession ?: withContext(Dispatchers.IO) {
-            val events = scheduleDao.getAllEvents()
-            currentScheduleContext = if (events.isEmpty()) {
-                "The student currently has no classes scheduled."
-            } else {
-                "The student has ${events.size} class(es) scheduled:\n" + events.joinToString("\n") { 
-                    "- ${it.courseName} on ${it.dayOfWeek} at ${it.startTime} in ${it.location}"
-                }
+            val classEvents = scheduleDao.getAllEvents()
+            val messEvents = messMenuDao.getAllEvents()
+            
+            val classContext = if (classEvents.isEmpty()) "No classes scheduled." else "Classes:\n" + classEvents.joinToString("\n") { 
+                "- ${it.courseName} on ${it.dayOfWeek} at ${it.startTime} in ${it.location}"
             }
+            
+            val messContext = if (messEvents.isEmpty()) "No mess menu added." else "Mess Menu:\n" + messEvents.joinToString("\n") {
+                "- ${it.mealType} on ${it.dayOfWeek} at ${it.time}. Menu: ${it.menuItems}"
+            }
+
+            currentScheduleContext = "$classContext\n$messContext"
 
             generativeModel = createGenerativeModel(availableModels[currentModelIndex], currentScheduleContext)
             
@@ -198,7 +243,10 @@ Do not output the JSON block until you have all 6 pieces of info!
                         var cleanReply = reply
                         
                         // Intercept JSON block robustly
-                        val intentIdx = reply.indexOf("\"intent\": \"schedule_class\"")
+                        val intentClassIdx = reply.indexOf("\"intent\": \"schedule_class\"")
+                        val intentMessIdx = reply.indexOf("\"intent\": \"schedule_mess_menu\"")
+                        val intentIdx = if (intentClassIdx != -1) intentClassIdx else intentMessIdx
+                        
                         if (intentIdx != -1) {
                             try {
                                 val jsonStart = reply.lastIndexOf("{", intentIdx)
@@ -206,34 +254,58 @@ Do not output the JSON block until you have all 6 pieces of info!
                                 if (jsonStart != -1 && jsonEnd > jsonStart) {
                                     val jsonString = reply.substring(jsonStart, jsonEnd).trim()
                                     val jsonObject = org.json.JSONObject(jsonString)
-                                    val courseName = jsonObject.getString("courseName")
-                                    val dayOfWeek = jsonObject.getString("dayOfWeek")
-                                    val startTime = jsonObject.getString("startTime")
-                                    val location = jsonObject.getString("location")
-                                    val startDateStr = jsonObject.getString("startDate")
-                                    val endDateStr = jsonObject.getString("endDate")
+                                    val intentType = jsonObject.getString("intent")
                                     
-                                    val event = ScheduleEvent(
-                                        courseName = courseName,
-                                        dayOfWeek = dayOfWeek,
-                                        startTime = startTime,
-                                        location = location,
-                                        startDateMillis = 0L,
-                                        endDateMillis = 0L
-                                    )
-                                    scheduleDao.insertAll(listOf(event))
-                                    AlarmScheduler.scheduleAlarmsForEvents(context, listOf(event), startDateStr, endDateStr)
+                                    if (intentType == "schedule_class") {
+                                        val courseName = jsonObject.getString("courseName")
+                                        val dayOfWeek = jsonObject.getString("dayOfWeek")
+                                        val startTime = jsonObject.getString("startTime")
+                                        val location = jsonObject.getString("location")
+                                        val startDateStr = jsonObject.getString("startDate")
+                                        val endDateStr = jsonObject.getString("endDate")
+                                        
+                                        val event = ScheduleEvent(
+                                            courseName = courseName,
+                                            dayOfWeek = dayOfWeek,
+                                            startTime = startTime,
+                                            location = location,
+                                            startDateMillis = 0L,
+                                            endDateMillis = 0L
+                                        )
+                                        scheduleDao.insertAll(listOf(event))
+                                        AlarmScheduler.scheduleAlarmsForEvents(context, listOf(event), startDateStr, endDateStr)
+                                        
+                                        if (cleanReply.isBlank() || cleanReply.replace("```json", "").replace("```", "").trim().isEmpty()) {
+                                            cleanReply = "Class scheduled successfully! You'll get an alert 15 minutes before."
+                                        }
+                                    } else if (intentType == "schedule_mess_menu") {
+                                        val mealType = jsonObject.getString("mealType")
+                                        val dayOfWeek = jsonObject.getString("dayOfWeek")
+                                        val time = jsonObject.getString("time")
+                                        val menu = jsonObject.getString("menu")
+                                        val startMillis = System.currentTimeMillis()
+                                        
+                                        val event = MessMenuEvent(
+                                            mealType = mealType,
+                                            dayOfWeek = dayOfWeek,
+                                            time = time,
+                                            menuItems = menu,
+                                            startDateMillis = startMillis
+                                        )
+                                        messMenuDao.insertAll(listOf(event))
+                                        AlarmScheduler.scheduleAlarmsForMessMenus(context, listOf(event), startMillis)
+                                        
+                                        if (cleanReply.isBlank() || cleanReply.replace("```json", "").replace("```", "").trim().isEmpty()) {
+                                            cleanReply = "Mess menu for $mealType scheduled successfully! You'll get an alert 15 minutes before."
+                                        }
+                                    }
                                     
                                     // Clean the reply
                                     val beforeJson = reply.substring(0, jsonStart)
                                     val afterJson = if (reply.length > jsonEnd) reply.substring(jsonEnd) else ""
                                     cleanReply = (beforeJson + afterJson).replace("```json", "").replace("```", "").trim()
                                     
-                                    if (cleanReply.isBlank()) {
-                                        cleanReply = "Class scheduled successfully! You'll get an alert 15 minutes before."
-                                    }
-                                    
-                                    chatSession = null // Invalidate session to reload context with new class
+                                    chatSession = null // Invalidate session to reload context
                                 }
                             } catch (e: Exception) {
                                 Log.e("ChatViewModel", "Error parsing schedule intent", e)
@@ -283,11 +355,15 @@ Do not output the JSON block until you have all 6 pieces of info!
     }
 }
 
-class ChatViewModelFactory(private val dao: ChatMessageDao, private val scheduleDao: ScheduleDao) : ViewModelProvider.Factory {
+class ChatViewModelFactory(
+    private val dao: ChatMessageDao, 
+    private val scheduleDao: ScheduleDao,
+    private val messMenuDao: MessMenuDao
+) : ViewModelProvider.Factory {
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(ChatViewModel::class.java)) {
             @Suppress("UNCHECKED_CAST")
-            return ChatViewModel(dao, scheduleDao) as T
+            return ChatViewModel(dao, scheduleDao, messMenuDao) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class")
     }

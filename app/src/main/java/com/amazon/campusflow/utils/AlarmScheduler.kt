@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.util.Log
 import com.amazon.campusflow.data.ScheduleEvent
+import com.amazon.campusflow.data.MessMenuEvent
 import com.amazon.campusflow.notifications.NotificationReceiver
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -80,6 +81,75 @@ object AlarmScheduler {
             }
         } catch (e: Exception) {
             Log.e("AlarmScheduler", "Error scheduling alarms", e)
+        }
+    }
+
+    fun scheduleAlarmsForMessMenus(context: Context, events: List<MessMenuEvent>, startDateMillis: Long) {
+        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val timeFormat12 = SimpleDateFormat("hh:mm a", Locale.getDefault())
+        val timeFormat24 = SimpleDateFormat("HH:mm", Locale.getDefault())
+
+        try {
+            val currentCal = Calendar.getInstance().apply { timeInMillis = startDateMillis }
+            // Schedule for 12 weeks (84 days) into the future
+            val endCal = Calendar.getInstance().apply { 
+                timeInMillis = startDateMillis
+                add(Calendar.DAY_OF_YEAR, 84)
+            }
+
+            while (currentCal.before(endCal)) {
+                val dayOfWeekInt = currentCal.get(Calendar.DAY_OF_WEEK)
+                val dayOfWeekString = getDayString(dayOfWeekInt)
+
+                for (event in events) {
+                    if (event.dayOfWeek.equals(dayOfWeekString, ignoreCase = true)) {
+                        try {
+                            val timeDate = try { timeFormat12.parse(event.time) } catch (e: Exception) { null } 
+                                           ?: try { timeFormat24.parse(event.time) } catch (e: Exception) { null }
+                            if (timeDate != null) {
+                                val timeCal = Calendar.getInstance().apply { time = timeDate }
+                                val alarmCal = Calendar.getInstance().apply {
+                                    timeInMillis = currentCal.timeInMillis
+                                    set(Calendar.HOUR_OF_DAY, timeCal.get(Calendar.HOUR_OF_DAY))
+                                    set(Calendar.MINUTE, timeCal.get(Calendar.MINUTE))
+                                    set(Calendar.SECOND, 0)
+                                    // Subtract 15 minutes for the alarm
+                                    add(Calendar.MINUTE, -15)
+                                }
+
+                                if (alarmCal.timeInMillis > System.currentTimeMillis()) {
+                                    val intent = Intent(context, NotificationReceiver::class.java).apply {
+                                        putExtra("COURSE_NAME", "Mess: ${event.mealType}")
+                                        putExtra("LOCATION", "Mess")
+                                    }
+                                    val requestCode = ("Mess${event.mealType}".hashCode() + alarmCal.timeInMillis).toInt()
+                                    val pendingIntent = PendingIntent.getBroadcast(
+                                        context,
+                                        requestCode,
+                                        intent,
+                                        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+                                    )
+
+                                    try {
+                                        alarmManager.setExactAndAllowWhileIdle(
+                                            AlarmManager.RTC_WAKEUP,
+                                            alarmCal.timeInMillis,
+                                            pendingIntent
+                                        )
+                                    } catch (e: SecurityException) {
+                                        Log.e("AlarmScheduler", "Exact alarm permission missing", e)
+                                    }
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.e("AlarmScheduler", "Error parsing time: ${event.time}", e)
+                        }
+                    }
+                }
+                currentCal.add(Calendar.DAY_OF_YEAR, 1)
+            }
+        } catch (e: Exception) {
+            Log.e("AlarmScheduler", "Error scheduling mess menu alarms", e)
         }
     }
 
