@@ -17,8 +17,8 @@ object AlarmScheduler {
     fun scheduleAlarmsForEvents(context: Context, events: List<ScheduleEvent>, startDateStr: String, endDateStr: String) {
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-        val timeFormat12 = SimpleDateFormat("hh:mm a", Locale.getDefault()) // 10:00 AM
-        val timeFormat24 = SimpleDateFormat("HH:mm", Locale.getDefault()) // 21:15
+        val timeFormat12 = SimpleDateFormat("h:mm a", Locale.getDefault()) // 10:00 AM or 6:15 AM
+        val timeFormat24 = SimpleDateFormat("H:mm", Locale.getDefault()) // 21:15 or 6:15
 
         try {
             val startDate = dateFormat.parse(startDateStr) ?: return
@@ -87,8 +87,8 @@ object AlarmScheduler {
 
     fun scheduleAlarmsForMessMenus(context: Context, events: List<MessMenuEvent>, startDateMillis: Long) {
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        val timeFormat12 = SimpleDateFormat("hh:mm a", Locale.getDefault())
-        val timeFormat24 = SimpleDateFormat("HH:mm", Locale.getDefault())
+        val timeFormat12 = SimpleDateFormat("h:mm a", Locale.getDefault())
+        val timeFormat24 = SimpleDateFormat("H:mm", Locale.getDefault())
 
         try {
             val currentCal = Calendar.getInstance().apply { timeInMillis = startDateMillis }

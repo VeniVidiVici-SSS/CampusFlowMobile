@@ -74,20 +74,18 @@ CURRENT SCHEDULE AND MENU CONTEXT:
 $scheduleContext
 ---
 
-If a student wants to add a CLASS to their schedule, you must gather: Course Name, Day of the week, Start Time, Location. DO NOT ask for Start Date or End Date.
+If a student wants to add a CLASS to their schedule, you must gather: Course Name, Day of the week, Start Time, Location, and Schedule End Date (YYYY-MM-DD). 
 
-If a student wants to add a MESS MENU or food timing, you must gather: Meal Type, Day of the week, Time, and Menu. DO NOT ask for Start Date or End Date.
+If a student wants to add a MESS MENU or food timing, you must gather: Meal Type, Day of the week, Time, and Menu.
 
 If a student wants to add a SINGLE CUSTOM EVENT (like a one-off extra class, hackathon, club meeting, invitation), you must gather: Event Name, Date (YYYY-MM-DD), Start Time, and End Time.
 
-CRITICAL CONVERSATIONAL RULES:
-- The user will speak in natural language. Extract the data yourself!
-- INFER the Event Name from context if they don't explicitly say "Event Name is X" (e.g. "I have a meeting" -> Event Name: "Meeting").
-- CURRENT DATE & TIME: Use the system context to know today's date and the current time. If the user says "in 17 minutes", "today", "tomorrow", or "next Monday", CALCULATE the exact Date and exact Start Time yourself! DO NOT ask the user for them.
-- Time format: You can output the time in 12-hour format with AM/PM (e.g. "06:25 PM") or 24-hour format (e.g. "18:25"). Both work.
-- If information is missing, you MUST ask for EVERY SINGLE PIECE of missing information together in a SINGLE message. Do not ask for details one-by-one!
-- Frame the request for missing info naturally.
-- To UPDATE a class, menu, or event, you MUST output a DELETE intent for the old item, and then immediately output a SCHEDULE intent for the new item in the same message!
+INTUITIVE CONVERSATIONAL RULES:
+- BE INTUITIVE AND SMART: Do not act like a rigid form-filler. Read between the lines. If the user says "I have a meeting at 4", infer the Event Name is "Meeting". If they say "lunch", the meal type is "Lunch".
+- CURRENT CONTEXT IS YOUR BRAIN: Use TODAY'S DATE and CURRENT TIME (provided below) to calculate relative times. If they say "in 15 minutes", "tomorrow", "next Monday", or "this evening", CALCULATE the exact dates and times yourself! Never ask the user to clarify something you can easily deduce.
+- MISSING DETAILS: Only ask the user for details if they are absolutely required and cannot be logically inferred. When you do ask, frame it as a natural, friendly conversation (e.g., "Got it! When does the semester end for that class?"). Do not ask for details one-by-one; gently ask for whatever is missing in a single message.
+- Time format: Accept any natural time format from the user. When outputting JSON, you may use 12-hour format with AM/PM (e.g. "06:25 PM") or 24-hour format (e.g. "18:25").
+- To UPDATE an item, output a DELETE intent for the old item, followed immediately by a SCHEDULE intent for the new item.
 
 Once you have ALL details for a CLASS, output a secret block at the end:
 ```json
@@ -96,7 +94,8 @@ Once you have ALL details for a CLASS, output a secret block at the end:
   "courseName": "...",
   "dayOfWeek": "...",
   "startTime": "...",
-  "location": "..."
+  "location": "...",
+  "endDate": "..."
 }
 ```
 
@@ -212,27 +211,27 @@ Do not output the JSON block until you have ALL info gathered!
         if (text.isBlank()) return
         
         viewModelScope.launch(Dispatchers.IO) {
-            // Check if we are waiting for dates
+            // Check if we are waiting for dates from Excel upload
             if (pendingSchedule != null) {
-                val pattern = Pattern.compile("(\\d{4}-\\d{2}-\\d{2})\\s*(?:to|-)\\s*(\\d{4}-\\d{2}-\\d{2})")
+                val pattern = java.util.regex.Pattern.compile("(\\d{4}-\\d{2}-\\d{2})")
                 val matcher = pattern.matcher(text)
                 if (matcher.find()) {
-                    val startDate = matcher.group(1)
-                    val endDate = matcher.group(2)
+                    val endDateStr = matcher.group(1)
+                    val cal = java.util.Calendar.getInstance()
+                    val format = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
+                    val startDateStr = format.format(cal.time)
                     
                     val eventsToInsert = pendingSchedule!!.map {
                         it.copy(startDateMillis = 0L, endDateMillis = 0L) // Simplified for hackathon
                     }
                     awsService.insertClasses(eventsToInsert)
                     
-                    // Insert the user's message now
                     val userMsg = ChatMessage(text = text.trim(), isFromUser = true)
                     dao.insertMessage(userMsg)
 
-                    // Schedule Alarms
-                    AlarmScheduler.scheduleAlarmsForEvents(context, pendingSchedule!!, startDate!!, endDate!!)
+                    AlarmScheduler.scheduleAlarmsForEvents(context, pendingSchedule!!, startDateStr, endDateStr!!)
                     
-                    val botMsg = ChatMessage(text = "Awesome! I have parsed your schedule from $startDate to $endDate and set up your class reminders. You'll get a notification 15 minutes before each class!", isFromUser = false)
+                    val botMsg = ChatMessage(text = "Awesome! I have set your schedule to start today and end on $endDateStr. You'll get a notification 15 minutes before each class!", isFromUser = false)
                     dao.insertMessage(botMsg)
                     pendingSchedule = null
                     chatSession = null // Invalidate session to reload context with new schedule
@@ -241,7 +240,7 @@ Do not output the JSON block until you have ALL info gathered!
                     val userMsg = ChatMessage(text = text.trim(), isFromUser = true)
                     dao.insertMessage(userMsg)
                     
-                    val botMsg = ChatMessage(text = "I couldn't understand those dates. Please use the exact format: YYYY-MM-DD to YYYY-MM-DD.", isFromUser = false)
+                    val botMsg = ChatMessage(text = "I couldn't understand that date. Please provide the end date exactly as: YYYY-MM-DD.", isFromUser = false)
                     dao.insertMessage(botMsg)
                     return@launch
                 }
@@ -283,8 +282,11 @@ Do not output the JSON block until you have ALL info gathered!
                                             val dayOfWeek = jsonObject.getString("dayOfWeek")
                                             val startTime = jsonObject.getString("startTime")
                                             val location = jsonObject.getString("location")
-                                            val startDateStr = jsonObject.getString("startDate")
                                             val endDateStr = jsonObject.getString("endDate")
+                                            
+                                            val cal = java.util.Calendar.getInstance()
+                                            val format = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
+                                            val startDateStr = format.format(cal.time)
                                             
                                             val event = ScheduleEvent(
                                                 courseName = courseName,
@@ -433,7 +435,7 @@ Do not output the JSON block until you have ALL info gathered!
                 val events = ExcelParser.parseSchedule(context, uri)
                 if (events.isNotEmpty()) {
                     pendingSchedule = events
-                    val botMsg = ChatMessage(text = "I've received your schedule containing ${events.size} classes! Enter start date and end date for the schedule (format: YYYY-MM-DD to YYYY-MM-DD).", isFromUser = false)
+                    val botMsg = ChatMessage(text = "I've received your schedule containing ${events.size} classes! The start date is set to today. Please provide the End Date for the schedule (format: YYYY-MM-DD).", isFromUser = false)
                     dao.insertMessage(botMsg)
                 } else {
                     val botMsg = ChatMessage(text = "I couldn't find any valid classes in that Excel file. Please ensure it has columns: Course, Day, Time, Location.", isFromUser = false)
