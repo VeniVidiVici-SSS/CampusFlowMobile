@@ -10,5 +10,6 @@ data class MessMenuEvent(
     val dayOfWeek: String,
     val time: String,
     val menuItems: String,
-    val startDateMillis: Long
+    val startDateMillis: Long,
+    val endTime: String = ""
 )

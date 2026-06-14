@@ -64,7 +64,8 @@ class AwsService {
                 startTime = item["startTime"]?.asS() ?: "",
                 location = item["location"]?.asS() ?: "",
                 startDateMillis = item["startDateMillis"]?.asN()?.toLong() ?: 0L,
-                endDateMillis = item["endDateMillis"]?.asN()?.toLong() ?: 0L
+                endDateMillis = item["endDateMillis"]?.asN()?.toLong() ?: 0L,
+                endTime = item["endTime"]?.asS() ?: ""
             )
         } ?: emptyList()
     }
@@ -84,7 +85,8 @@ class AwsService {
                     "startTime" to AttributeValue.S(event.startTime),
                     "location" to AttributeValue.S(event.location),
                     "startDateMillis" to AttributeValue.N(event.startDateMillis.toString()),
-                    "endDateMillis" to AttributeValue.N(event.endDateMillis.toString())
+                    "endDateMillis" to AttributeValue.N(event.endDateMillis.toString()),
+                    "endTime" to AttributeValue.S(event.endTime)
                 )
             }
             dynamoDbClient.putItem(request)
@@ -115,7 +117,8 @@ class AwsService {
                 dayOfWeek = item["dayOfWeek"]?.asS() ?: "",
                 time = item["time"]?.asS() ?: "",
                 menuItems = item["menuItems"]?.asS() ?: "",
-                startDateMillis = item["startDateMillis"]?.asN()?.toLong() ?: 0L
+                startDateMillis = item["startDateMillis"]?.asN()?.toLong() ?: 0L,
+                endTime = item["endTime"]?.asS() ?: ""
             )
         } ?: emptyList()
     }
@@ -134,7 +137,8 @@ class AwsService {
                     "dayOfWeek" to AttributeValue.S(event.dayOfWeek),
                     "time" to AttributeValue.S(event.time),
                     "menuItems" to AttributeValue.S(event.menuItems),
-                    "startDateMillis" to AttributeValue.N(event.startDateMillis.toString())
+                    "startDateMillis" to AttributeValue.N(event.startDateMillis.toString()),
+                    "endTime" to AttributeValue.S(event.endTime)
                 )
             }
             dynamoDbClient.putItem(request)

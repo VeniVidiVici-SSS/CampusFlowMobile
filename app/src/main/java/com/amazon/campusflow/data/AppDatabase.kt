@@ -6,7 +6,7 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import com.amazon.campusflow.ui.chat.ChatMessage
 
-@Database(entities = [ChatMessage::class, ScheduleEvent::class, MessMenuEvent::class], version = 3, exportSchema = false)
+@Database(entities = [ChatMessage::class, ScheduleEvent::class, MessMenuEvent::class], version = 4, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun chatMessageDao(): ChatMessageDao
     abstract fun scheduleDao(): ScheduleDao

@@ -85,6 +85,7 @@ INTUITIVE CONVERSATIONAL RULES:
 - CURRENT CONTEXT IS YOUR BRAIN: Use TODAY'S DATE and CURRENT TIME (provided below) to calculate relative times. If they say "in 15 minutes", "tomorrow", "next Monday", or "this evening", CALCULATE the exact dates and times yourself! Never ask the user to clarify something you can easily deduce.
 - EVENT LOOKUPS: If deleting or modifying an event, look at the CURRENT SCHEDULE AND MENU CONTEXT. Extract the "Series Start Date" directly from there. NEVER ask the user for the original start date of an event.
 - MISSING DETAILS: Only ask the user for details if they are absolutely required and cannot be logically inferred. When you do ask, frame it as a natural, friendly conversation (e.g., "Got it! When does the semester end for that class?"). Do not ask for details one-by-one; gently ask for whatever is missing in a single message.
+- CRITICAL END TIME RULE: Every class and mess menu MUST have an `endTime`. If the user does not specify an end time, intuitively look at the user's CURRENT SCHEDULE AND MENU CONTEXT. Find the start time of the NEXT event on that same day and use it as the end time. If there is no subsequent event on that day to infer from, DO NOT output JSON. Instead, casually ask the user for the end time.
 - Time format: Accept any natural time format from the user. When outputting JSON, you may use 12-hour format with AM/PM (e.g. "06:25 PM") or 24-hour format (e.g. "18:25").
 - To UPDATE an item, output a DELETE intent for the old item, followed immediately by a SCHEDULE intent for the new item.
 
@@ -95,6 +96,7 @@ Once you have ALL details for a CLASS, output a secret block at the end:
   "courseName": "...",
   "dayOfWeek": "...",
   "startTime": "...",
+  "endTime": "...",
   "location": "...",
   "endDate": "..."
 }
@@ -107,7 +109,8 @@ Once you have ALL details for a MESS MENU, output:
   "mealType": "...",
   "dayOfWeek": "...",
   "time": "...",
-  "menu": "..."
+  "endTime": "...",
+  "menuItems": "..."
 }
 ```
 
@@ -273,6 +276,7 @@ Do not output the JSON block until you have ALL info gathered!
                                             val startTime = jsonObject.getString("startTime")
                                             val location = jsonObject.getString("location")
                                             val endDateStr = jsonObject.getString("endDate")
+                                            val endTime = if (jsonObject.has("endTime")) jsonObject.getString("endTime") else ""
                                             
                                             val cal = java.util.Calendar.getInstance()
                                             val format = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
@@ -284,7 +288,8 @@ Do not output the JSON block until you have ALL info gathered!
                                                 startTime = startTime,
                                                 location = location,
                                                 startDateMillis = 0L,
-                                                endDateMillis = 0L
+                                                endDateMillis = 0L,
+                                                endTime = endTime
                                             )
                                             AlarmScheduler.scheduleAlarmsForEvents(context, listOf(event), startDateStr, endDateStr)
                                             awsService.insertClasses(listOf(event))
@@ -293,6 +298,7 @@ Do not output the JSON block until you have ALL info gathered!
                                             val mealType = jsonObject.getString("mealType")
                                             val dayOfWeek = jsonObject.getString("dayOfWeek")
                                             val time = jsonObject.getString("time")
+                                            val endTime = if (jsonObject.has("endTime")) jsonObject.getString("endTime") else ""
                                             val menuItems = jsonObject.getString("menuItems")
                                             
                                             val cal = java.util.Calendar.getInstance()
@@ -303,7 +309,8 @@ Do not output the JSON block until you have ALL info gathered!
                                                 dayOfWeek = dayOfWeek,
                                                 time = time,
                                                 menuItems = menuItems,
-                                                startDateMillis = 0L
+                                                startDateMillis = 0L,
+                                                endTime = endTime
                                             )
                                             AlarmScheduler.scheduleAlarmsForMessMenus(context, listOf(event), startMillis)
                                             awsService.insertMessMenus(listOf(event))

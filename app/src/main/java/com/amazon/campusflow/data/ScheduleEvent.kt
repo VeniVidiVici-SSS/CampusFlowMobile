@@ -11,5 +11,6 @@ data class ScheduleEvent(
     val startTime: String, // e.g. "10:00 AM"
     val location: String,
     val startDateMillis: Long, // to restrict the weekly repetition
-    val endDateMillis: Long
+    val endDateMillis: Long,
+    val endTime: String = ""
 )
