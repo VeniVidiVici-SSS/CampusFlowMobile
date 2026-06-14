@@ -119,8 +119,9 @@ object AlarmScheduler {
 
                                 if (alarmCal.timeInMillis > System.currentTimeMillis()) {
                                     val intent = Intent(context, NotificationReceiver::class.java).apply {
-                                        putExtra("COURSE_NAME", "Mess: ${event.mealType}")
-                                        putExtra("LOCATION", "Mess")
+                                        putExtra("COURSE_NAME", event.mealType)
+                                        putExtra("LOCATION", event.menuItems)
+                                        putExtra("IS_MESS", true)
                                     }
                                     val requestCode = ("Mess${event.mealType}".hashCode() + alarmCal.timeInMillis).toInt()
                                     val pendingIntent = PendingIntent.getBroadcast(

@@ -15,7 +15,14 @@ class NotificationReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val courseName = intent.getStringExtra("COURSE_NAME") ?: "Class"
         val location = intent.getStringExtra("LOCATION") ?: ""
-        val message = "Your class $courseName is starting soon at $location."
+        val isMess = intent.getBooleanExtra("IS_MESS", false)
+        
+        val message = if (isMess) {
+            "Time for $courseName! Menu: $location"
+        } else {
+            "Your class $courseName is starting soon at $location."
+        }
+        val title = if (isMess) "Upcoming Mess: $courseName" else "Upcoming Class: $courseName"
 
         val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val channelId = "campusflow_channel"
@@ -41,7 +48,7 @@ class NotificationReceiver : BroadcastReceiver() {
 
         val notification = NotificationCompat.Builder(context, channelId)
             .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle("Upcoming Class: $courseName")
+            .setContentTitle(title)
             .setContentText(message)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)

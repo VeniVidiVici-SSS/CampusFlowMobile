@@ -25,14 +25,14 @@ import com.amazon.campusflow.data.ScheduleDao
 import com.amazon.campusflow.data.ScheduleEvent
 import com.amazon.campusflow.data.MessMenuDao
 import com.amazon.campusflow.data.MessMenuEvent
+import com.amazon.campusflow.data.AwsService
 import com.amazon.campusflow.utils.AlarmScheduler
 import com.amazon.campusflow.utils.ExcelParser
 import java.util.regex.Pattern
 
 class ChatViewModel(
     private val dao: ChatMessageDao, 
-    private val scheduleDao: ScheduleDao,
-    private val messMenuDao: MessMenuDao
+    private val awsService: AwsService
 ) : ViewModel() {
 
     private var pendingSchedule: List<ScheduleEvent>? = null
@@ -180,8 +180,8 @@ Do not output the JSON block until you have all 6 pieces of info!
 
     private suspend fun getOrCreateChatSession(): Chat {
         return chatSession ?: withContext(Dispatchers.IO) {
-            val classEvents = scheduleDao.getAllEvents()
-            val messEvents = messMenuDao.getAllEvents()
+            val classEvents = awsService.getAllClasses()
+            val messEvents = awsService.getAllMessMenus()
             
             val classContext = if (classEvents.isEmpty()) "No classes scheduled." else "Classes:\n" + classEvents.joinToString("\n") { 
                 "- ${it.courseName} on ${it.dayOfWeek} at ${it.startTime} in ${it.location}"
@@ -221,7 +221,7 @@ Do not output the JSON block until you have all 6 pieces of info!
                     val eventsToInsert = pendingSchedule!!.map {
                         it.copy(startDateMillis = 0L, endDateMillis = 0L) // Simplified for hackathon
                     }
-                    scheduleDao.insertAll(eventsToInsert)
+                    awsService.insertClasses(eventsToInsert)
                     
                     // Insert the user's message now
                     val userMsg = ChatMessage(text = text.trim(), isFromUser = true)
@@ -292,7 +292,7 @@ Do not output the JSON block until you have all 6 pieces of info!
                                                 startDateMillis = 0L,
                                                 endDateMillis = 0L
                                             )
-                                            scheduleDao.insertAll(listOf(event))
+                                            awsService.insertClasses(listOf(event))
                                             AlarmScheduler.scheduleAlarmsForEvents(context, listOf(event), startDateStr, endDateStr)
                                         }
                                         "schedule_mess_menu" -> {
@@ -309,25 +309,25 @@ Do not output the JSON block until you have all 6 pieces of info!
                                                 menuItems = menu,
                                                 startDateMillis = startMillis
                                             )
-                                            messMenuDao.insertAll(listOf(event))
+                                            awsService.insertMessMenus(listOf(event))
                                             AlarmScheduler.scheduleAlarmsForMessMenus(context, listOf(event), startMillis)
                                         }
                                         "delete_class" -> {
                                             val courseName = jsonObject.getString("courseName")
                                             val dayOfWeek = jsonObject.getString("dayOfWeek")
-                                            val event = scheduleDao.getEvent(courseName, dayOfWeek)
+                                            val event = awsService.getEvent(courseName, dayOfWeek)
                                             if (event != null) {
                                                 AlarmScheduler.cancelAlarmsForEvents(context, event)
-                                                scheduleDao.deleteEvent(courseName, dayOfWeek)
+                                                awsService.deleteClass(courseName, dayOfWeek)
                                             }
                                         }
                                         "delete_mess_menu" -> {
                                             val mealType = jsonObject.getString("mealType")
                                             val dayOfWeek = jsonObject.getString("dayOfWeek")
-                                            val event = messMenuDao.getEvent(mealType, dayOfWeek)
+                                            val event = awsService.getMessEvent(mealType, dayOfWeek)
                                             if (event != null) {
                                                 AlarmScheduler.cancelAlarmsForMessMenus(context, event)
-                                                messMenuDao.deleteEvent(mealType, dayOfWeek)
+                                                awsService.deleteMessMenu(mealType, dayOfWeek)
                                             }
                                         }
                                     }
@@ -380,14 +380,32 @@ Do not output the JSON block until you have all 6 pieces of info!
 
     fun processScheduleFile(context: Context, uri: Uri) {
         viewModelScope.launch(Dispatchers.IO) {
-            val events = ExcelParser.parseSchedule(context, uri)
-            if (events.isNotEmpty()) {
-                pendingSchedule = events
-                val botMsg = ChatMessage(text = "I've received your schedule containing ${events.size} classes! Enter start date and end date for the schedule (format: YYYY-MM-DD to YYYY-MM-DD).", isFromUser = false)
-                dao.insertMessage(botMsg)
-            } else {
-                val botMsg = ChatMessage(text = "I couldn't find any valid classes in that Excel file. Please ensure it has columns: Course, Day, Time, Location.", isFromUser = false)
-                dao.insertMessage(botMsg)
+            try {
+                // Upload original Excel to S3 bucket
+                val s3Stream = context.contentResolver.openInputStream(uri)
+                if (s3Stream != null) {
+                    try {
+                        val s3Url = awsService.uploadScheduleToS3(s3Stream)
+                        Log.d("ChatViewModel", "Uploaded schedule to S3: $s3Url")
+                    } catch (e: Exception) {
+                        Log.e("ChatViewModel", "Failed to upload to S3", e)
+                    } finally {
+                        s3Stream.close()
+                    }
+                }
+
+                // Parse locally
+                val events = ExcelParser.parseSchedule(context, uri)
+                if (events.isNotEmpty()) {
+                    pendingSchedule = events
+                    val botMsg = ChatMessage(text = "I've received your schedule containing ${events.size} classes! Enter start date and end date for the schedule (format: YYYY-MM-DD to YYYY-MM-DD).", isFromUser = false)
+                    dao.insertMessage(botMsg)
+                } else {
+                    val botMsg = ChatMessage(text = "I couldn't find any valid classes in that Excel file. Please ensure it has columns: Course, Day, Time, Location.", isFromUser = false)
+                    dao.insertMessage(botMsg)
+                }
+            } catch (e: Exception) {
+                Log.e("ChatViewModel", "Error processing file", e)
             }
         }
     }
@@ -395,13 +413,12 @@ Do not output the JSON block until you have all 6 pieces of info!
 
 class ChatViewModelFactory(
     private val dao: ChatMessageDao, 
-    private val scheduleDao: ScheduleDao,
-    private val messMenuDao: MessMenuDao
+    private val awsService: AwsService
 ) : ViewModelProvider.Factory {
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(ChatViewModel::class.java)) {
             @Suppress("UNCHECKED_CAST")
-            return ChatViewModel(dao, scheduleDao, messMenuDao) as T
+            return ChatViewModel(dao, awsService) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class")
     }

@@ -15,22 +15,24 @@ val geminiApiKey = localProperties.getProperty("GEMINI_API_KEY") ?: ""
 
 android {
     namespace = "com.amazon.campusflow"
-    compileSdk {
-        version = release(36) {
-            minorApiLevel = 1
-        }
-    }
-
+    compileSdk = 35
     defaultConfig {
         applicationId = "com.amazon.campusflow"
         minSdk = 26
-        targetSdk = 36
+        targetSdk = 35
         versionCode = 1
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        vectorDrawables {
+            useSupportLibrary = true
+        }
         
-        buildConfigField("String", "GEMINI_API_KEY", "\"${geminiApiKey}\"")
+        buildConfigField("String", "GEMINI_API_KEY", "\"${localProperties.getProperty("GEMINI_API_KEY", "")}\"")
+        buildConfigField("String", "AWS_ACCESS_KEY_ID", "\"${localProperties.getProperty("AWS_ACCESS_KEY_ID", "")}\"")
+        buildConfigField("String", "AWS_SECRET_ACCESS_KEY", "\"${localProperties.getProperty("AWS_SECRET_ACCESS_KEY", "")}\"")
+        buildConfigField("String", "AWS_REGION", "\"${localProperties.getProperty("AWS_REGION", "ap-south-1")}\"")
+        buildConfigField("String", "AWS_S3_BUCKET_NAME", "\"${localProperties.getProperty("AWS_S3_BUCKET_NAME", "")}\"")
     }
 
     buildTypes {
@@ -81,6 +83,11 @@ dependencies {
     ksp(libs.androidx.room.compiler)
     implementation(libs.apache.poi)
     implementation(libs.apache.poi.ooxml)
+    
+    // AWS SDK for Kotlin (S3 & DynamoDB)
+    implementation("aws.sdk.kotlin:dynamodb:1.2.0")
+    implementation("aws.sdk.kotlin:s3:1.2.0")
+
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)

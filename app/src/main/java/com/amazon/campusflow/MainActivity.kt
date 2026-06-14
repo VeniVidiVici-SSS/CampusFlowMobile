@@ -35,9 +35,8 @@ class MainActivity : ComponentActivity() {
         
         val database = AppDatabase.getDatabase(this)
         val dao = database.chatMessageDao()
-        val scheduleDao = database.scheduleDao()
-        val messMenuDao = database.messMenuDao()
-        val factory = ChatViewModelFactory(dao, scheduleDao, messMenuDao)
+        val awsService = com.amazon.campusflow.data.AwsService()
+        val factory = ChatViewModelFactory(dao, awsService)
 
         enableEdgeToEdge()
         setContent {
