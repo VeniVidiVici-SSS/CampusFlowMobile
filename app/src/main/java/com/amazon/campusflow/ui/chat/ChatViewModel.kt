@@ -221,65 +221,41 @@ Do not output the JSON block until you have ALL info gathered!
         }
     }
 
-    fun sendMessage(context: Context, text: String) {
-        if (text.isBlank()) return
+    fun sendMessage(context: Context, text: String, extractedDoc: com.amazon.campusflow.utils.ExtractedDocument? = null) {
+        if (text.isBlank() && extractedDoc == null) return
         
         viewModelScope.launch(Dispatchers.IO) {
-            // Check if we are waiting for dates from Excel upload
-            if (pendingSchedule != null) {
-                val pattern = java.util.regex.Pattern.compile("(\\d{4}-\\d{2}-\\d{2})")
-                val matcher = pattern.matcher(text)
-                if (matcher.find()) {
-                    val endDateStr = matcher.group(1)
-                    val cal = java.util.Calendar.getInstance()
-                    val format = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
-                    val startDateStr = format.format(cal.time)
-                    
-                    val eventsToInsert = pendingSchedule!!.map {
-                        it.copy(startDateMillis = 0L, endDateMillis = 0L) // Simplified for hackathon
-                    }
-                    awsService.insertClasses(eventsToInsert)
-                    
-                    val userMsg = ChatMessage(text = text.trim(), isFromUser = true)
-                    dao.insertMessage(userMsg)
-
-                    AlarmScheduler.scheduleAlarmsForEvents(context, pendingSchedule!!, startDateStr, endDateStr!!)
-                    
-                    val botMsg = ChatMessage(text = "Awesome! I have set your schedule to start today and end on $endDateStr. You'll get a notification 15 minutes before each class!", isFromUser = false)
-                    dao.insertMessage(botMsg)
-                    pendingSchedule = null
-                    chatSession = null // Invalidate session to reload context with new schedule
-                    return@launch
-                } else {
-                    val userMsg = ChatMessage(text = text.trim(), isFromUser = true)
-                    dao.insertMessage(userMsg)
-                    
-                    val botMsg = ChatMessage(text = "I couldn't understand that date. Please provide the end date exactly as: YYYY-MM-DD.", isFromUser = false)
-                    dao.insertMessage(botMsg)
-                    return@launch
-                }
-            }
-
             var success = false
             var exceptionMessage = ""
             var retries = 0
 
             while (!success && retries <= availableModels.size) {
                 try {
-                    // Initialize the chat session with history BEFORE inserting the new message
                     val chat = getOrCreateChatSession()
                     
                     if (retries == 0) {
-                        // Now insert the user message into the DB so it shows in the UI exactly once
-                        val userMsg = ChatMessage(text = text.trim(), isFromUser = true)
+                        val displayMsg = if (extractedDoc != null) "Uploaded a file." else text.trim()
+                        val userMsg = ChatMessage(text = displayMsg, isFromUser = true)
                         dao.insertMessage(userMsg)
                     }
                     
-                    val response = chat.sendMessage(text.trim())
+                    val contentToSend = content {
+                        if (extractedDoc != null) {
+                            text("The user has uploaded a file. If this contains a schedule, please intuitively extract all events and output the appropriate schedule JSON blocks for each. If you cannot determine necessary details like the end date, DO NOT output JSON; instead, ask the user. ")
+                            when (extractedDoc) {
+                                is com.amazon.campusflow.utils.ExtractedDocument.Text -> text("File contents:\n${extractedDoc.content}")
+                                is com.amazon.campusflow.utils.ExtractedDocument.Images -> extractedDoc.bitmaps.forEach { image(it) }
+                                is com.amazon.campusflow.utils.ExtractedDocument.Error -> text("Failed to read file: ${extractedDoc.message}")
+                            }
+                        } else {
+                            text(text.trim())
+                        }
+                    }
+                    
+                    val response = chat.sendMessage(contentToSend)
                     response.text?.let { reply ->
                         var cleanReply = reply
                         
-                        // Intercept JSON blocks robustly with regex
                         val intentRegex = """\{[\s\S]*?"intent"\s*:\s*"([^"]+)"[\s\S]*?\}""".toRegex()
                         val matches = intentRegex.findAll(reply).toList()
                         
@@ -310,25 +286,27 @@ Do not output the JSON block until you have ALL info gathered!
                                                 startDateMillis = 0L,
                                                 endDateMillis = 0L
                                             )
-                                            awsService.insertClasses(listOf(event))
                                             AlarmScheduler.scheduleAlarmsForEvents(context, listOf(event), startDateStr, endDateStr)
+                                            awsService.insertClasses(listOf(event))
                                         }
                                         "schedule_mess_menu" -> {
                                             val mealType = jsonObject.getString("mealType")
                                             val dayOfWeek = jsonObject.getString("dayOfWeek")
                                             val time = jsonObject.getString("time")
-                                            val menu = jsonObject.getString("menu")
-                                            val startMillis = System.currentTimeMillis()
+                                            val menuItems = jsonObject.getString("menuItems")
+                                            
+                                            val cal = java.util.Calendar.getInstance()
+                                            val startMillis = cal.timeInMillis
                                             
                                             val event = MessMenuEvent(
                                                 mealType = mealType,
                                                 dayOfWeek = dayOfWeek,
                                                 time = time,
-                                                menuItems = menu,
-                                                startDateMillis = startMillis
+                                                menuItems = menuItems,
+                                                startDateMillis = 0L
                                             )
-                                            awsService.insertMessMenus(listOf(event))
                                             AlarmScheduler.scheduleAlarmsForMessMenus(context, listOf(event), startMillis)
+                                            awsService.insertMessMenus(listOf(event))
                                         }
                                         "delete_class" -> {
                                             val courseName = jsonObject.getString("courseName")
@@ -366,7 +344,6 @@ Do not output the JSON block until you have ALL info gathered!
                                                 repeatInterval = repeatInterval,
                                                 repeatEndDate = repeatEndDate
                                             )
-                                            // Schedule alarm FIRST so it works even if AWS fails
                                             AlarmScheduler.scheduleAlarmsForCustomEvents(context, event)
                                             try {
                                                 awsService.insertCustomEvent(event)
@@ -379,14 +356,12 @@ Do not output the JSON block until you have ALL info gathered!
                                             val dateToCancel = jsonObject.getString("dateToCancel")
                                             
                                             try {
-                                                // Intuitively find the existing event by name so the AI doesn't have to guess the series start date
                                                 val existingEvent = awsService.getAllCustomEvents().find { it.eventName.equals(eventName, ignoreCase = true) }
                                                 if (existingEvent != null) {
                                                     val seriesStartDate = existingEvent.date
                                                     AlarmScheduler.cancelAlarmsForCustomEvents(context, existingEvent)
                                                     awsService.cancelCustomEventInstance(eventName, seriesStartDate, dateToCancel)
                                                     
-                                                    // Fetch the updated event and reschedule
                                                     val updatedEvent = awsService.getCustomEvent(eventName, seriesStartDate)
                                                     if (updatedEvent != null) {
                                                         AlarmScheduler.scheduleAlarmsForCustomEvents(context, updatedEvent)
@@ -398,7 +373,6 @@ Do not output the JSON block until you have ALL info gathered!
                                         }
                                         "delete_custom_event" -> {
                                             val eventName = jsonObject.getString("eventName")
-                                            // Find the event by name intuitively
                                             val event = awsService.getAllCustomEvents().find { it.eventName.equals(eventName, ignoreCase = true) }
                                             if (event != null) {
                                                 AlarmScheduler.cancelAlarmsForCustomEvents(context, event)
@@ -412,7 +386,6 @@ Do not output the JSON block until you have ALL info gathered!
                                     }
                                 }
                                 
-                                // Strip JSON from cleanReply
                                 var strippedReply = reply
                                 for (match in matches) {
                                     strippedReply = strippedReply.replace(match.value, "")
@@ -423,7 +396,7 @@ Do not output the JSON block until you have ALL info gathered!
                                     cleanReply = "Done! I've updated your schedule."
                                 }
                                 
-                                chatSession = null // Invalidate session to reload context
+                                chatSession = null
                             } catch (e: Exception) {
                                 Log.e("ChatViewModel", "Error parsing schedule intent", e)
                             }
@@ -441,7 +414,6 @@ Do not output the JSON block until you have ALL info gathered!
                     if (isQuotaError && switchToNextModel()) {
                         retries++
                         Log.w("ChatViewModel", "Quota exceeded, silently falling back to model: ${availableModels[currentModelIndex]}")
-                        // Loop continues and retries automatically
                     } else {
                         Log.e("ChatViewModel", "Error communicating with Gemini", e)
                         exceptionMessage = e.message ?: "Could not connect to AI. Please try again."
@@ -460,7 +432,6 @@ Do not output the JSON block until you have ALL info gathered!
     fun processScheduleFile(context: Context, uri: Uri) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                // Upload original Excel to S3 bucket
                 val s3Stream = context.contentResolver.openInputStream(uri)
                 if (s3Stream != null) {
                     try {
@@ -473,18 +444,13 @@ Do not output the JSON block until you have ALL info gathered!
                     }
                 }
 
-                // Parse locally
-                val events = ExcelParser.parseSchedule(context, uri)
-                if (events.isNotEmpty()) {
-                    pendingSchedule = events
-                    val botMsg = ChatMessage(text = "I've received your schedule containing ${events.size} classes! The start date is set to today. Please provide the End Date for the schedule (format: YYYY-MM-DD).", isFromUser = false)
-                    dao.insertMessage(botMsg)
-                } else {
-                    val botMsg = ChatMessage(text = "I couldn't find any valid classes in that Excel file. Please ensure it has columns: Course, Day, Time, Location.", isFromUser = false)
-                    dao.insertMessage(botMsg)
-                }
+                val extracted = com.amazon.campusflow.utils.DocumentExtractor.extract(context, uri)
+                sendMessage(context, "", extracted)
+
             } catch (e: Exception) {
                 Log.e("ChatViewModel", "Error processing file", e)
+                val botMsg = ChatMessage(text = "Error processing file: ${e.message}", isFromUser = false)
+                dao.insertMessage(botMsg)
             }
         }
     }

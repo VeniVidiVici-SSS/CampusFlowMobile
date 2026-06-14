@@ -34,7 +34,7 @@ fun ChatScreen(
     val context = LocalContext.current
     
     val launcher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
+        contract = ActivityResultContracts.OpenDocument()
     ) { uri ->
         uri?.let {
             viewModel.processScheduleFile(context, it)
@@ -68,7 +68,19 @@ fun ChatScreen(
                 inputText = ""
             },
             onAttachClick = {
-                launcher.launch("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                launcher.launch(arrayOf(
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", // xlsx
+                    "application/vnd.ms-excel", // xls
+                    "text/csv", // csv
+                    "text/plain", // txt
+                    "application/pdf", // pdf
+                    "image/jpeg", // jpg, jpeg
+                    "image/png", // png
+                    "application/msword", // doc
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document", // docx
+                    "application/vnd.ms-powerpoint", // ppt
+                    "application/vnd.openxmlformats-officedocument.presentationml.presentation" // pptx
+                ))
             }
         )
     }
