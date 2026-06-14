@@ -23,6 +23,10 @@ import android.os.Build
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 
+import androidx.compose.runtime.*
+import com.amazon.campusflow.ui.dashboard.DashboardScreen
+import com.amazon.campusflow.ui.dashboard.DashboardViewModelFactory
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -36,16 +40,33 @@ class MainActivity : ComponentActivity() {
         val database = AppDatabase.getDatabase(this)
         val dao = database.chatMessageDao()
         val awsService = com.amazon.campusflow.data.AwsService()
-        val factory = ChatViewModelFactory(dao, awsService)
+        val chatFactory = ChatViewModelFactory(dao, awsService)
+        val dashboardFactory = DashboardViewModelFactory(awsService)
 
         enableEdgeToEdge()
         setContent {
+            var currentScreen by remember { mutableStateOf("dashboard") }
+            val dashboardViewModel: com.amazon.campusflow.ui.dashboard.DashboardViewModel = viewModel(factory = dashboardFactory)
+            val chatViewModel: com.amazon.campusflow.ui.chat.ChatViewModel = viewModel(factory = chatFactory)
+
             CampusFlowTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    ChatScreen(
-                        modifier = Modifier.padding(innerPadding),
-                        viewModel = viewModel(factory = factory)
-                    )
+                    if (currentScreen == "dashboard") {
+                        DashboardScreen(
+                            modifier = Modifier.padding(innerPadding),
+                            viewModel = dashboardViewModel,
+                            onNavigateToChat = { currentScreen = "chat" }
+                        )
+                    } else if (currentScreen == "chat") {
+                        ChatScreen(
+                            modifier = Modifier.padding(innerPadding),
+                            viewModel = chatViewModel,
+                            onNavigateBack = { 
+                                dashboardViewModel.refreshEvents()
+                                currentScreen = "dashboard" 
+                            }
+                        )
+                    }
                 }
             }
         }

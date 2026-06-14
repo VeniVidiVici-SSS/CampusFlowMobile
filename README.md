@@ -10,6 +10,7 @@ CampusFlow is not just a chat wrapper. It is a deeply integrated native Android 
 
 ## ✨ Key Features
 
+- **Native Productivity Dashboard**: The app launches into a custom Jetpack Compose dashboard featuring a full-month interactive calendar and a dynamically unified feed of your classes, mess menus, and custom tasks. State-based navigation ensures instantaneous switching between the Dashboard and the AI Assistant.
 - **In-Context RAG Document Q&A**: The app leverages the massive token context window of the Gemini 2.0 architecture alongside native Android `PdfRenderer` and Apache POI. You can upload `.xlsx`, `.csv`, `.docx`, `.pptx`, `.pdf`, or even `.jpg` files. If it's a timetable, the AI extracts the schedule. If it's a 20-page syllabus or lecture notes, you can ask endless follow-up questions and the AI will act as a conversational tutor with perfect semantic recall.
 - **Smart Bin-Packing Task Scheduler**: Provide a list of tasks and their durations (e.g., *"Schedule 2 hours of math and 1 hr of reading today"*). A native Android backend algorithm computes your strict time boundaries, and the AI actively bin-packs your tasks into the empty gaps of your day without overlaps. If it doesn't fit, it will conversationally suggest alternatives.
 - **Intuitive NLP CRUD Operations**: Complete Create, Read, Update, and Delete control over your classes, mess menus, and custom recurring events using purely natural language. Tell the AI: *"Actually, shift my Saturday DSA class to Sunday at 5 PM,"* and it handles the complex database transactions seamlessly without asking rigid formatting questions.
@@ -29,13 +30,14 @@ CampusFlow is not just a chat wrapper. It is a deeply integrated native Android 
 
 ## 📱 How to Use
 
-1. **Schedule a Class:** Type *"Add Embedded Systems on Monday at 10:15 AM in Room 404"*.
-2. **Schedule Food:** Type *"Add Pizza for Dinner on Friday at 8:00 PM"*.
-3. **Custom Events & Recurrence:** Type *"Schedule a weekly team standup every Wednesday at 9 AM"*.
-4. **Multimodal Import:** Tap the `+` attach icon to upload an image, PDF, or spreadsheet. The AI will read it and ask if it missed anything!
-5. **Query:** Type *"What is my schedule for today?"* or *"When is my next class?"*
-6. **Update/Delete:** Type *"Cancel my Friday Dinner"* or *"Move Monday's Embedded Systems class to Tuesday"*.
-7. **Study:** Ask the AI to write a Python script or explain a physics concept.
+1. **Explore the Dashboard:** Tap any date on the home calendar to instantly view your unified events for that day. Tap the floating chat button to open the AI Assistant.
+2. **Schedule a Class:** Type *"Add Embedded Systems on Monday at 10:15 AM in Room 404"*.
+3. **Schedule Food:** Type *"Add Pizza for Dinner on Friday at 8:00 PM"*.
+4. **Custom Events & Recurrence:** Type *"Schedule a weekly team standup every Wednesday at 9 AM"*.
+5. **Multimodal Import:** Tap the `+` attach icon to upload an image, PDF, or spreadsheet. The AI will read it and ask if it missed anything!
+6. **Query:** Type *"What is my schedule for today?"* or *"When is my next class?"*
+7. **Update/Delete:** Type *"Cancel my Friday Dinner"* or *"Move Monday's Embedded Systems class to Tuesday"*.
+8. **Study:** Ask the AI to write a Python script or explain a physics concept.
 
 ## ⚙️ Setup & Installation
 
