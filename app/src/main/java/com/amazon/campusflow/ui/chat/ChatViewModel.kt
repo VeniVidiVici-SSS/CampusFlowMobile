@@ -23,8 +23,9 @@ import android.content.Context
 import android.net.Uri
 import com.amazon.campusflow.data.ScheduleDao
 import com.amazon.campusflow.data.ScheduleEvent
-import com.amazon.campusflow.data.MessMenuDao
 import com.amazon.campusflow.data.MessMenuEvent
+import com.amazon.campusflow.data.CustomEvent
+import com.amazon.campusflow.data.MessMenuDao
 import com.amazon.campusflow.data.AwsService
 import com.amazon.campusflow.utils.AlarmScheduler
 import com.amazon.campusflow.utils.ExcelParser
@@ -66,26 +67,27 @@ You help students manage their schedules AND act as a generalized academic tutor
 
 You are fully capable of answering general queries on ANY subject, writing code, solving math/logic problems, and providing detailed academic explanations.
 
-If a student asks about their schedule, classes, OR mess menu, answer naturally using the following context.
-If they have no classes or menus scheduled, inform them politely.
+If a student asks about their schedule, classes, mess menu, OR single custom events (like an extra class or meeting), answer naturally using the following context.
+If they have no classes or events scheduled, inform them politely.
 ---
 CURRENT SCHEDULE AND MENU CONTEXT:
 $scheduleContext
 ---
 
-If a student wants to add a class to their schedule, you must gather 6 pieces of information: Course Name, Day of the week, Start Time, Location, Schedule Start Date (YYYY-MM-DD), and Schedule End Date (YYYY-MM-DD).
+If a student wants to add a CLASS to their schedule, you must gather: Course Name, Day of the week, Start Time, Location. DO NOT ask for Start Date or End Date.
 
-If a student wants to add a mess menu or food timing, you must gather 4 pieces of information: Meal Type (e.g. Breakfast/Lunch/Dinner), Day of the week, Time, and Menu.
+If a student wants to add a MESS MENU or food timing, you must gather: Meal Type, Day of the week, Time, and Menu. DO NOT ask for Start Date or End Date.
+
+If a student wants to add a SINGLE CUSTOM EVENT (like a one-off extra class, hackathon, club meeting, invitation), you must gather: Event Name, Date (YYYY-MM-DD), Start Time, and End Time.
 
 CRITICAL CONVERSATIONAL RULES:
-- The user will speak in natural language (e.g., "I have DSA on Monday at 10 PM in Hall A"). Extract the data yourself!
-- DO NOT force the user to use a specific format for time or dates. 
-- If the user provides a 12-hour time (like "10 PM"), YOU must silently convert it to 24-hour HH:mm format (e.g. "22:00") for the JSON block. Do not ask the user to format it.
-- If information is missing, you MUST ask for EVERY SINGLE PIECE of missing information together in a SINGLE message. Do not ask for details one-by-one, as this wastes chat turns!
-- Frame the request for missing info naturally. For example, instead of a robotic bulleted list, say: "Got it! To finish scheduling, could you tell me what room that is in, and what dates the semester starts and ends?"
-- Do NOT ask for an end time for the class/meal.
-- To DELETE a class or menu, ask for the Course Name/Meal Type and Day.
-- To UPDATE a class or menu, you MUST output a DELETE intent for the old item, and then immediately output a SCHEDULE intent for the new item in the same message!
+- The user will speak in natural language. Extract the data yourself!
+- INFER the Event Name from context if they don't explicitly say "Event Name is X" (e.g. "I have a meeting" -> Event Name: "Meeting").
+- CURRENT DATE & TIME: Use the system context to know today's date and the current time. If the user says "in 17 minutes", "today", "tomorrow", or "next Monday", CALCULATE the exact Date and exact Start Time yourself! DO NOT ask the user for them.
+- Time format: You can output the time in 12-hour format with AM/PM (e.g. "06:25 PM") or 24-hour format (e.g. "18:25"). Both work.
+- If information is missing, you MUST ask for EVERY SINGLE PIECE of missing information together in a SINGLE message. Do not ask for details one-by-one!
+- Frame the request for missing info naturally.
+- To UPDATE a class, menu, or event, you MUST output a DELETE intent for the old item, and then immediately output a SCHEDULE intent for the new item in the same message!
 
 Once you have ALL details for a CLASS, output a secret block at the end:
 ```json
@@ -94,13 +96,11 @@ Once you have ALL details for a CLASS, output a secret block at the end:
   "courseName": "...",
   "dayOfWeek": "...",
   "startTime": "...",
-  "location": "...",
-  "startDate": "...",
-  "endDate": "..."
+  "location": "..."
 }
 ```
 
-Once you have ALL details for a MESS MENU, output a secret block at the end:
+Once you have ALL details for a MESS MENU, output:
 ```json
 {
   "intent": "schedule_mess_menu",
@@ -108,6 +108,17 @@ Once you have ALL details for a MESS MENU, output a secret block at the end:
   "dayOfWeek": "...",
   "time": "...",
   "menu": "..."
+}
+```
+
+Once you have ALL details for a SINGLE CUSTOM EVENT, output:
+```json
+{
+  "intent": "schedule_custom_event",
+  "eventName": "...",
+  "date": "...",
+  "startTime": "...",
+  "endTime": "..."
 }
 ```
 
@@ -128,32 +139,16 @@ To DELETE a MESS MENU, output:
   "dayOfWeek": "..."
 }
 ```
-Do not output the JSON block until you have ALL info gathered!
-1. Course Name
-2. Day of the week (e.g. Saturday)
-3. Start Time (MUST be in HH:mm 24-hour format)
-4. Location
-5. Schedule Start Date (YYYY-MM-DD)
-6. Schedule End Date (YYYY-MM-DD)
 
-IMPORTANT INSTRUCTIONS:
-- You MUST ask for ALL missing information in a SINGLE message to save time. Do not ask for details one-by-one!
-- Inform the student that classes repeat weekly within the start and end dates. 
-- Do NOT ask for an end time for the class. Ask for the start date and end date instead.
-
-Once you have gathered ALL 6 pieces of information, you MUST output a secret scheduling block at the very end of your message in exactly this format:
+To DELETE a SINGLE CUSTOM EVENT, output:
 ```json
 {
-  "intent": "schedule_class",
-  "courseName": "...",
-  "dayOfWeek": "...",
-  "startTime": "...",
-  "location": "...",
-  "startDate": "...",
-  "endDate": "..."
+  "intent": "delete_custom_event",
+  "eventName": "...",
+  "date": "..."
 }
 ```
-Do not output the JSON block until you have all 6 pieces of info!
+Do not output the JSON block until you have ALL info gathered!
             """.trimIndent())
             }
         )
@@ -182,6 +177,7 @@ Do not output the JSON block until you have all 6 pieces of info!
         return chatSession ?: withContext(Dispatchers.IO) {
             val classEvents = awsService.getAllClasses()
             val messEvents = awsService.getAllMessMenus()
+            val customEvents = awsService.getAllCustomEvents()
             
             val classContext = if (classEvents.isEmpty()) "No classes scheduled." else "Classes:\n" + classEvents.joinToString("\n") { 
                 "- ${it.courseName} on ${it.dayOfWeek} at ${it.startTime} in ${it.location}"
@@ -191,7 +187,13 @@ Do not output the JSON block until you have all 6 pieces of info!
                 "- ${it.mealType} on ${it.dayOfWeek} at ${it.time}. Menu: ${it.menuItems}"
             }
 
-            currentScheduleContext = "$classContext\n$messContext"
+            val customContext = if (customEvents.isEmpty()) "No custom events." else "Custom Events:\n" + customEvents.joinToString("\n") {
+                "- ${it.eventName} on ${it.date} from ${it.startTime} to ${it.endTime}"
+            }
+
+            val todayDate = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date())
+            val currentTime = java.text.SimpleDateFormat("hh:mm a", java.util.Locale.getDefault()).format(java.util.Date())
+            currentScheduleContext = "TODAY'S DATE: $todayDate | CURRENT TIME: $currentTime\n\n$classContext\n$messContext\n$customContext"
 
             generativeModel = createGenerativeModel(availableModels[currentModelIndex], currentScheduleContext)
             
@@ -328,6 +330,39 @@ Do not output the JSON block until you have all 6 pieces of info!
                                             if (event != null) {
                                                 AlarmScheduler.cancelAlarmsForMessMenus(context, event)
                                                 awsService.deleteMessMenu(mealType, dayOfWeek)
+                                            }
+                                        }
+                                        "schedule_custom_event" -> {
+                                            val eventName = jsonObject.getString("eventName")
+                                            val date = jsonObject.getString("date")
+                                            val startTime = jsonObject.getString("startTime")
+                                            val endTime = jsonObject.getString("endTime")
+                                            
+                                            val event = CustomEvent(
+                                                eventName = eventName,
+                                                date = date,
+                                                startTime = startTime,
+                                                endTime = endTime
+                                            )
+                                            // Schedule alarm FIRST so it works even if AWS fails
+                                            AlarmScheduler.scheduleAlarmsForCustomEvents(context, event)
+                                            try {
+                                                awsService.insertCustomEvent(event)
+                                            } catch (e: Exception) {
+                                                Log.e("ChatViewModel", "Failed to sync custom event to AWS", e)
+                                            }
+                                        }
+                                        "delete_custom_event" -> {
+                                            val eventName = jsonObject.getString("eventName")
+                                            val date = jsonObject.getString("date")
+                                            val event = awsService.getCustomEvent(eventName, date)
+                                            if (event != null) {
+                                                AlarmScheduler.cancelAlarmsForCustomEvents(context, event)
+                                                try {
+                                                    awsService.deleteCustomEvent(eventName, date)
+                                                } catch (e: Exception) {
+                                                    Log.e("ChatViewModel", "Failed to delete custom event from AWS", e)
+                                                }
                                             }
                                         }
                                     }

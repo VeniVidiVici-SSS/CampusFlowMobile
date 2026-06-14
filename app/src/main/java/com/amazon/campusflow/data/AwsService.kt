@@ -151,4 +151,49 @@ class AwsService {
         }
         dynamoDbClient.deleteItem(request)
     }
+    // --- DynamoDB Operations for Custom Events ---
+
+    suspend fun getAllCustomEvents(): List<CustomEvent> {
+        val request = ScanRequest {
+            tableName = "CampusFlow_CustomEvents"
+        }
+        val response = dynamoDbClient.scan(request)
+        return response.items?.map { item ->
+            CustomEvent(
+                eventName = item["eventName"]?.asS() ?: "",
+                date = item["date"]?.asS() ?: "",
+                startTime = item["startTime"]?.asS() ?: "",
+                endTime = item["endTime"]?.asS() ?: ""
+            )
+        } ?: emptyList()
+    }
+
+    suspend fun getCustomEvent(eventName: String, date: String): CustomEvent? {
+        val all = getAllCustomEvents()
+        return all.find { it.eventName == eventName && it.date == date }
+    }
+
+    suspend fun insertCustomEvent(event: CustomEvent) {
+        val request = PutItemRequest {
+            tableName = "CampusFlow_CustomEvents"
+            item = mapOf(
+                "eventName" to AttributeValue.S(event.eventName),
+                "date" to AttributeValue.S(event.date),
+                "startTime" to AttributeValue.S(event.startTime),
+                "endTime" to AttributeValue.S(event.endTime)
+            )
+        }
+        dynamoDbClient.putItem(request)
+    }
+
+    suspend fun deleteCustomEvent(eventName: String, date: String) {
+        val request = DeleteItemRequest {
+            tableName = "CampusFlow_CustomEvents"
+            key = mapOf(
+                "eventName" to AttributeValue.S(eventName),
+                "date" to AttributeValue.S(date)
+            )
+        }
+        dynamoDbClient.deleteItem(request)
+    }
 }

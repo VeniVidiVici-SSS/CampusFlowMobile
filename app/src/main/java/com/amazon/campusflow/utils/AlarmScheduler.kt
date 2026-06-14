@@ -7,6 +7,7 @@ import android.content.Intent
 import android.util.Log
 import com.amazon.campusflow.data.ScheduleEvent
 import com.amazon.campusflow.data.MessMenuEvent
+import com.amazon.campusflow.data.CustomEvent
 import com.amazon.campusflow.notifications.NotificationReceiver
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -251,6 +252,116 @@ object AlarmScheduler {
             }
         } catch (e: Exception) {
             Log.e("AlarmScheduler", "Error canceling mess menu alarms", e)
+        }
+    }
+
+    fun scheduleAlarmsForCustomEvents(context: Context, event: CustomEvent) {
+        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        // Use h:mm to allow single-digit hours (e.g. 6:17 instead of 06:17)
+        val timeFormat12 = SimpleDateFormat("h:mm a", Locale.getDefault())
+        val timeFormat24 = SimpleDateFormat("H:mm", Locale.getDefault())
+        val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+
+        try {
+            val date = dateFormat.parse(event.date) ?: return
+            val timeDate = try { timeFormat12.parse(event.startTime) } catch (e: Exception) { null } 
+                           ?: try { timeFormat24.parse(event.startTime) } catch (e: Exception) { null }
+            if (timeDate != null) {
+                val dateCal = Calendar.getInstance().apply { time = date }
+                val timeCal = Calendar.getInstance().apply { time = timeDate }
+                val eventStartCal = Calendar.getInstance().apply {
+                    set(Calendar.YEAR, dateCal.get(Calendar.YEAR))
+                    set(Calendar.MONTH, dateCal.get(Calendar.MONTH))
+                    set(Calendar.DAY_OF_MONTH, dateCal.get(Calendar.DAY_OF_MONTH))
+                    set(Calendar.HOUR_OF_DAY, timeCal.get(Calendar.HOUR_OF_DAY))
+                    set(Calendar.MINUTE, timeCal.get(Calendar.MINUTE))
+                    set(Calendar.SECOND, 0)
+                }
+                
+                val alarmCal = Calendar.getInstance().apply {
+                    timeInMillis = eventStartCal.timeInMillis
+                    add(Calendar.MINUTE, -15)
+                }
+
+                var triggerTime = alarmCal.timeInMillis
+                val now = System.currentTimeMillis()
+
+                if (triggerTime <= now && eventStartCal.timeInMillis > now) {
+                    // Less than 15 mins away! Trigger in 2 seconds
+                    triggerTime = now + 2000
+                }
+
+                if (triggerTime > now) {
+                    val intent = Intent(context, NotificationReceiver::class.java).apply {
+                        putExtra("COURSE_NAME", event.eventName)
+                        putExtra("LOCATION", event.startTime)
+                        putExtra("IS_CUSTOM", true)
+                    }
+                    val requestCode = ("Custom${event.eventName}".hashCode() + alarmCal.timeInMillis).toInt()
+                    val pendingIntent = PendingIntent.getBroadcast(
+                        context,
+                        requestCode,
+                        intent,
+                        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+                    )
+
+                    try {
+                        alarmManager.setExactAndAllowWhileIdle(
+                            AlarmManager.RTC_WAKEUP,
+                            triggerTime,
+                            pendingIntent
+                        )
+                    } catch (e: SecurityException) {
+                        Log.e("AlarmScheduler", "Exact alarm permission missing", e)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("AlarmScheduler", "Error scheduling custom event alarm", e)
+        }
+    }
+
+    fun cancelAlarmsForCustomEvents(context: Context, event: CustomEvent) {
+        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val timeFormat12 = SimpleDateFormat("hh:mm a", Locale.getDefault())
+        val timeFormat24 = SimpleDateFormat("HH:mm", Locale.getDefault())
+        val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+
+        try {
+            val date = dateFormat.parse(event.date) ?: return
+            val timeDate = try { timeFormat12.parse(event.startTime) } catch (e: Exception) { null } 
+                           ?: try { timeFormat24.parse(event.startTime) } catch (e: Exception) { null }
+            if (timeDate != null) {
+                val dateCal = Calendar.getInstance().apply { time = date }
+                val timeCal = Calendar.getInstance().apply { time = timeDate }
+                val alarmCal = Calendar.getInstance().apply {
+                    set(Calendar.YEAR, dateCal.get(Calendar.YEAR))
+                    set(Calendar.MONTH, dateCal.get(Calendar.MONTH))
+                    set(Calendar.DAY_OF_MONTH, dateCal.get(Calendar.DAY_OF_MONTH))
+                    set(Calendar.HOUR_OF_DAY, timeCal.get(Calendar.HOUR_OF_DAY))
+                    set(Calendar.MINUTE, timeCal.get(Calendar.MINUTE))
+                    set(Calendar.SECOND, 0)
+                    add(Calendar.MINUTE, -15)
+                }
+
+                val intent = Intent(context, NotificationReceiver::class.java).apply {
+                    putExtra("COURSE_NAME", event.eventName)
+                    putExtra("LOCATION", event.startTime)
+                    putExtra("IS_CUSTOM", true)
+                }
+                val requestCode = ("Custom${event.eventName}".hashCode() + alarmCal.timeInMillis).toInt()
+                
+                val pendingIntent = PendingIntent.getBroadcast(
+                    context,
+                    requestCode,
+                    intent,
+                    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+                )
+                alarmManager.cancel(pendingIntent)
+                pendingIntent.cancel()
+            }
+        } catch (e: Exception) {
+            Log.e("AlarmScheduler", "Error canceling custom event alarm", e)
         }
     }
 

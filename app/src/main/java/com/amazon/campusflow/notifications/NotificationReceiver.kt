@@ -16,13 +16,23 @@ class NotificationReceiver : BroadcastReceiver() {
         val courseName = intent.getStringExtra("COURSE_NAME") ?: "Class"
         val location = intent.getStringExtra("LOCATION") ?: ""
         val isMess = intent.getBooleanExtra("IS_MESS", false)
+        val isCustom = intent.getBooleanExtra("IS_CUSTOM", false)
         
         val message = if (isMess) {
             "Time for $courseName! Menu: $location"
+        } else if (isCustom) {
+            "Your event starts at $location. Don't be late!"
         } else {
             "Your class $courseName is starting soon at $location."
         }
-        val title = if (isMess) "Upcoming Mess: $courseName" else "Upcoming Class: $courseName"
+        
+        val title = if (isMess) {
+            "Upcoming Mess: $courseName"
+        } else if (isCustom) {
+            "Upcoming Event: $courseName"
+        } else {
+            "Upcoming Class: $courseName"
+        }
 
         val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val channelId = "campusflow_channel"
