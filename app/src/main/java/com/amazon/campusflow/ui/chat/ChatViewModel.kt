@@ -86,6 +86,7 @@ INTUITIVE CONVERSATIONAL RULES:
 - EVENT LOOKUPS: If deleting or modifying an event, look at the CURRENT SCHEDULE AND MENU CONTEXT. Extract the "Series Start Date" directly from there. NEVER ask the user for the original start date of an event.
 - MISSING DETAILS: Only ask the user for details if they are absolutely required and cannot be logically inferred. When you do ask, frame it as a natural, friendly conversation (e.g., "Got it! When does the semester end for that class?"). Do not ask for details one-by-one; gently ask for whatever is missing in a single message.
 - CRITICAL END TIME RULE: Every class and mess menu MUST have an `endTime`. If the user does not specify an end time, intuitively look at the user's CURRENT SCHEDULE AND MENU CONTEXT. Find the start time of the NEXT event on that same day and use it as the end time. If there is no subsequent event on that day to infer from, DO NOT output JSON. Instead, casually ask the user for the end time.
+- OVERLAP DETECTION: If the user asks to schedule an event, immediately check if its time overlaps with any existing event in the CURRENT SCHEDULE AND MENU CONTEXT. If there is a time conflict, DO NOT output the schedule JSON. Instead, warn the user about the overlap and ask how they want to proceed (e.g., replace the old event, schedule anyway, or pick a new time).
 - Time format: Accept any natural time format from the user. When outputting JSON, you may use 12-hour format with AM/PM (e.g. "06:25 PM") or 24-hour format (e.g. "18:25").
 - To UPDATE an item, output a DELETE intent for the old item, followed immediately by a SCHEDULE intent for the new item.
 
@@ -188,18 +189,80 @@ Do not output the JSON block until you have ALL info gathered!
             initialValue = emptyList()
         )
 
+    private fun parseTimeToMillis(timeStr: String): Long {
+        return try {
+            val format12 = java.text.SimpleDateFormat("hh:mm a", java.util.Locale.getDefault())
+            val format24 = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
+            val date = try {
+                format12.parse(timeStr.trim().uppercase())
+            } catch (e: Exception) {
+                format24.parse(timeStr.trim())
+            }
+            date?.time ?: 0L
+        } catch (e: Exception) {
+            0L
+        }
+    }
+
+    private data class SortableEvent(val type: String, val id: Int, val day: String, val startStr: String, val startMs: Long, var endStr: String)
+
+    private fun computeUnifiedEndTimes(
+        classes: List<com.amazon.campusflow.data.ScheduleEvent>,
+        mess: List<com.amazon.campusflow.data.MessMenuEvent>
+    ): Pair<List<com.amazon.campusflow.data.ScheduleEvent>, List<com.amazon.campusflow.data.MessMenuEvent>> {
+        val sortableEvents = mutableListOf<SortableEvent>()
+        
+        classes.forEachIndexed { i, c ->
+            sortableEvents.add(SortableEvent("class", i, c.dayOfWeek, c.startTime, parseTimeToMillis(c.startTime), c.endTime))
+        }
+        mess.forEachIndexed { i, m ->
+            sortableEvents.add(SortableEvent("mess", i, m.dayOfWeek, m.time, parseTimeToMillis(m.time), m.endTime))
+        }
+
+        val days = listOf("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+        
+        sortableEvents.sortWith(compareBy({ days.indexOf(it.day) }, { it.startMs }))
+
+        for (i in sortableEvents.indices) {
+            if (sortableEvents[i].endStr.isBlank() || sortableEvents[i].endStr == "[Unknown End Time]") {
+                if (i + 1 < sortableEvents.size && sortableEvents[i].day == sortableEvents[i+1].day) {
+                    sortableEvents[i].endStr = sortableEvents[i+1].startStr
+                } else {
+                    sortableEvents[i].endStr = "End of Day"
+                }
+            }
+        }
+
+        val updatedClasses = classes.mapIndexed { i, c ->
+            val sortedMatch = sortableEvents.find { it.type == "class" && it.id == i }
+            c.copy(endTime = sortedMatch?.endStr ?: c.endTime)
+        }
+        
+        val updatedMess = mess.mapIndexed { i, m ->
+            val sortedMatch = sortableEvents.find { it.type == "mess" && it.id == i }
+            m.copy(endTime = sortedMatch?.endStr ?: m.endTime)
+        }
+
+        return Pair(updatedClasses, updatedMess)
+    }
+
     private suspend fun getOrCreateChatSession(): Chat {
         return chatSession ?: withContext(Dispatchers.IO) {
-            val classEvents = awsService.getAllClasses()
-            val messEvents = awsService.getAllMessMenus()
+            val rawClassEvents = awsService.getAllClasses()
+            val rawMessEvents = awsService.getAllMessMenus()
+            
+            val (classEvents, messEvents) = computeUnifiedEndTimes(rawClassEvents, rawMessEvents)
+            
             val customEvents = awsService.getAllCustomEvents()
             
             val classContext = if (classEvents.isEmpty()) "No classes scheduled." else "Classes:\n" + classEvents.joinToString("\n") { 
-                "- ${it.courseName} on ${it.dayOfWeek} at ${it.startTime} in ${it.location}"
+                val endStr = if (it.endTime.isNotBlank()) it.endTime else "End of Day"
+                "- ${it.courseName} on ${it.dayOfWeek}. Time: ${it.startTime} to $endStr. Location: ${it.location}"
             }
             
             val messContext = if (messEvents.isEmpty()) "No mess menu added." else "Mess Menu:\n" + messEvents.joinToString("\n") {
-                "- ${it.mealType} on ${it.dayOfWeek} at ${it.time}. Menu: ${it.menuItems}"
+                val endStr = if (it.endTime.isNotBlank()) it.endTime else "End of Day"
+                "- ${it.mealType} on ${it.dayOfWeek}. Time: ${it.time} to $endStr. Menu: ${it.menuItems}"
             }
 
             val customContext = if (customEvents.isEmpty()) "No custom events." else "Custom Events:\n" + customEvents.joinToString("\n") {
@@ -207,7 +270,7 @@ Do not output the JSON block until you have ALL info gathered!
                 "- ${it.eventName}. Series Start Date: ${it.date}. Time: ${it.startTime} to ${it.endTime}$repeatContext"
             }
 
-            val todayDate = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date())
+            val todayDate = java.text.SimpleDateFormat("EEEE, yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date())
             val currentTime = java.text.SimpleDateFormat("hh:mm a", java.util.Locale.getDefault()).format(java.util.Date())
             currentScheduleContext = "TODAY'S DATE: $todayDate | CURRENT TIME: $currentTime\n\n$classContext\n$messContext\n$customContext"
 
@@ -243,15 +306,19 @@ Do not output the JSON block until you have ALL info gathered!
                     }
                     
                     val contentToSend = content {
+                        val todayDate = java.text.SimpleDateFormat("EEEE, yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date())
+                        val currentTime = java.text.SimpleDateFormat("hh:mm a", java.util.Locale.getDefault()).format(java.util.Date())
+                        val timePrefix = "[System Note: The current exact date is $todayDate and the current time is $currentTime]\n\n"
+
                         if (extractedDoc != null) {
-                            text("The user has uploaded a file. If this contains a schedule, please intuitively extract all events and output the appropriate schedule JSON blocks for each. If you cannot determine necessary details like the end date, DO NOT output JSON; instead, ask the user. ")
+                            text(timePrefix + "The user has uploaded a file. If this contains a schedule, please intuitively extract all events and output the appropriate schedule JSON blocks for each. If you cannot determine necessary details like the end date, DO NOT output JSON; instead, ask the user. ")
                             when (extractedDoc) {
                                 is com.amazon.campusflow.utils.ExtractedDocument.Text -> text("File contents:\n${extractedDoc.content}")
                                 is com.amazon.campusflow.utils.ExtractedDocument.Images -> extractedDoc.bitmaps.forEach { image(it) }
                                 is com.amazon.campusflow.utils.ExtractedDocument.Error -> text("Failed to read file: ${extractedDoc.message}")
                             }
                         } else {
-                            text(text.trim())
+                            text(timePrefix + text.trim())
                         }
                     }
                     
