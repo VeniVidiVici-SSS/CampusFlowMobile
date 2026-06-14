@@ -84,11 +84,14 @@ INTUITIVE CONVERSATIONAL RULES:
 - BE INTUITIVE AND SMART: Do not act like a rigid form-filler. Read between the lines. If the user says "I have a meeting at 4", infer the Event Name is "Meeting". If they say "lunch", the meal type is "Lunch".
 - CURRENT CONTEXT IS YOUR BRAIN: Use TODAY'S DATE and CURRENT TIME (provided below) to calculate relative times. If they say "in 15 minutes", "tomorrow", "next Monday", or "this evening", CALCULATE the exact dates and times yourself! Never ask the user to clarify something you can easily deduce.
 - EVENT LOOKUPS: If deleting or modifying an event, look at the CURRENT SCHEDULE AND MENU CONTEXT. Extract the "Series Start Date" directly from there. NEVER ask the user for the original start date of an event.
+- SMART SCHEDULING ALGORITHM: If the user provides tasks with durations (e.g., "Schedule 2 hours of math and 1 hr of reading today") without exact times, YOU must act as a smart scheduler. Find free gaps in the CURRENT SCHEDULE AND MENU CONTEXT. Allocate the tasks into those empty gaps without overlapping existing events. Output a separate `schedule_custom_event` JSON block for each task.
+- SCHEDULING FAILURE: If it is impossible to fit the requested tasks into the available free time for that day, DO NOT output any JSON. Instead, inform the user of the time constraint and suggest alternatives (e.g., scheduling for tomorrow, or cancelling an existing event).
 - MISSING DETAILS: Only ask the user for details if they are absolutely required and cannot be logically inferred. When you do ask, frame it as a natural, friendly conversation (e.g., "Got it! When does the semester end for that class?"). Do not ask for details one-by-one; gently ask for whatever is missing in a single message.
 - CRITICAL END TIME RULE: Every class and mess menu MUST have an `endTime`. If the user does not specify an end time, intuitively look at the user's CURRENT SCHEDULE AND MENU CONTEXT. Find the start time of the NEXT event on that same day and use it as the end time. If there is no subsequent event on that day to infer from, DO NOT output JSON. Instead, casually ask the user for the end time.
+- UNKNOWN END TIMES: If the CURRENT SCHEDULE context has an event with `[Unknown End Time]`, you MUST ask the user what time that event ends before you attempt to schedule anything else on that day.
 - OVERLAP DETECTION: If the user asks to schedule an event, immediately check if its time overlaps with any existing event in the CURRENT SCHEDULE AND MENU CONTEXT. If there is a time conflict, DO NOT output the schedule JSON. Instead, warn the user about the overlap and ask how they want to proceed (e.g., replace the old event, schedule anyway, or pick a new time).
 - Time format: Accept any natural time format from the user. When outputting JSON, you may use 12-hour format with AM/PM (e.g. "06:25 PM") or 24-hour format (e.g. "18:25").
-- To UPDATE an item, output a DELETE intent for the old item, followed immediately by a SCHEDULE intent for the new item.
+- To UPDATE an item (e.g., if the user provides a missing end time for an existing class), you MUST output a DELETE intent for the old item, followed immediately by a SCHEDULE intent for the new updated item!
 
 Once you have ALL details for a CLASS, output a secret block at the end:
 ```json
@@ -224,11 +227,11 @@ Do not output the JSON block until you have ALL info gathered!
         sortableEvents.sortWith(compareBy({ days.indexOf(it.day) }, { it.startMs }))
 
         for (i in sortableEvents.indices) {
-            if (sortableEvents[i].endStr.isBlank() || sortableEvents[i].endStr == "[Unknown End Time]") {
+            if (sortableEvents[i].endStr.isBlank() || sortableEvents[i].endStr == "[Unknown End Time]" || sortableEvents[i].endStr == "End of Day") {
                 if (i + 1 < sortableEvents.size && sortableEvents[i].day == sortableEvents[i+1].day) {
                     sortableEvents[i].endStr = sortableEvents[i+1].startStr
                 } else {
-                    sortableEvents[i].endStr = "End of Day"
+                    sortableEvents[i].endStr = "[Unknown End Time]"
                 }
             }
         }
@@ -256,12 +259,12 @@ Do not output the JSON block until you have ALL info gathered!
             val customEvents = awsService.getAllCustomEvents()
             
             val classContext = if (classEvents.isEmpty()) "No classes scheduled." else "Classes:\n" + classEvents.joinToString("\n") { 
-                val endStr = if (it.endTime.isNotBlank()) it.endTime else "End of Day"
+                val endStr = if (it.endTime.isNotBlank()) it.endTime else "[Unknown End Time]"
                 "- ${it.courseName} on ${it.dayOfWeek}. Time: ${it.startTime} to $endStr. Location: ${it.location}"
             }
             
             val messContext = if (messEvents.isEmpty()) "No mess menu added." else "Mess Menu:\n" + messEvents.joinToString("\n") {
-                val endStr = if (it.endTime.isNotBlank()) it.endTime else "End of Day"
+                val endStr = if (it.endTime.isNotBlank()) it.endTime else "[Unknown End Time]"
                 "- ${it.mealType} on ${it.dayOfWeek}. Time: ${it.time} to $endStr. Menu: ${it.menuItems}"
             }
 
