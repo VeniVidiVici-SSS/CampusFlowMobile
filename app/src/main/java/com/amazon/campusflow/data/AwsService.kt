@@ -163,7 +163,11 @@ class AwsService {
                 eventName = item["eventName"]?.asS() ?: "",
                 date = item["date"]?.asS() ?: "",
                 startTime = item["startTime"]?.asS() ?: "",
-                endTime = item["endTime"]?.asS() ?: ""
+                endTime = item["endTime"]?.asS() ?: "",
+                repeatType = item["repeatType"]?.asS() ?: "NONE",
+                repeatInterval = item["repeatInterval"]?.asN()?.toIntOrNull() ?: 1,
+                repeatEndDate = item["repeatEndDate"]?.asS(),
+                cancelledDates = item["cancelledDates"]?.asS() ?: ""
             )
         } ?: emptyList()
     }
@@ -174,16 +178,30 @@ class AwsService {
     }
 
     suspend fun insertCustomEvent(event: CustomEvent) {
+        val itemMap = mutableMapOf(
+            "eventName" to AttributeValue.S(event.eventName),
+            "date" to AttributeValue.S(event.date),
+            "startTime" to AttributeValue.S(event.startTime),
+            "endTime" to AttributeValue.S(event.endTime),
+            "repeatType" to AttributeValue.S(event.repeatType),
+            "repeatInterval" to AttributeValue.N(event.repeatInterval.toString()),
+            "cancelledDates" to AttributeValue.S(event.cancelledDates)
+        )
+        if (event.repeatEndDate != null) {
+            itemMap["repeatEndDate"] = AttributeValue.S(event.repeatEndDate)
+        }
         val request = PutItemRequest {
             tableName = "CampusFlow_CustomEvents"
-            item = mapOf(
-                "eventName" to AttributeValue.S(event.eventName),
-                "date" to AttributeValue.S(event.date),
-                "startTime" to AttributeValue.S(event.startTime),
-                "endTime" to AttributeValue.S(event.endTime)
-            )
+            item = itemMap
         }
         dynamoDbClient.putItem(request)
+    }
+
+    suspend fun cancelCustomEventInstance(eventName: String, date: String, cancelDate: String) {
+        val event = getCustomEvent(eventName, date) ?: return
+        val newCancelled = if (event.cancelledDates.isEmpty()) cancelDate else "${event.cancelledDates},$cancelDate"
+        val updatedEvent = event.copy(cancelledDates = newCancelled)
+        insertCustomEvent(updatedEvent)
     }
 
     suspend fun deleteCustomEvent(eventName: String, date: String) {

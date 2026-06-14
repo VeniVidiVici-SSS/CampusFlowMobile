@@ -83,6 +83,7 @@ If a student wants to add a SINGLE CUSTOM EVENT (like a one-off extra class, hac
 INTUITIVE CONVERSATIONAL RULES:
 - BE INTUITIVE AND SMART: Do not act like a rigid form-filler. Read between the lines. If the user says "I have a meeting at 4", infer the Event Name is "Meeting". If they say "lunch", the meal type is "Lunch".
 - CURRENT CONTEXT IS YOUR BRAIN: Use TODAY'S DATE and CURRENT TIME (provided below) to calculate relative times. If they say "in 15 minutes", "tomorrow", "next Monday", or "this evening", CALCULATE the exact dates and times yourself! Never ask the user to clarify something you can easily deduce.
+- EVENT LOOKUPS: If deleting or modifying an event, look at the CURRENT SCHEDULE AND MENU CONTEXT. Extract the "Series Start Date" directly from there. NEVER ask the user for the original start date of an event.
 - MISSING DETAILS: Only ask the user for details if they are absolutely required and cannot be logically inferred. When you do ask, frame it as a natural, friendly conversation (e.g., "Got it! When does the semester end for that class?"). Do not ask for details one-by-one; gently ask for whatever is missing in a single message.
 - Time format: Accept any natural time format from the user. When outputting JSON, you may use 12-hour format with AM/PM (e.g. "06:25 PM") or 24-hour format (e.g. "18:25").
 - To UPDATE an item, output a DELETE intent for the old item, followed immediately by a SCHEDULE intent for the new item.
@@ -117,9 +118,13 @@ Once you have ALL details for a SINGLE CUSTOM EVENT, output:
   "eventName": "...",
   "date": "...",
   "startTime": "...",
-  "endTime": "..."
+  "endTime": "...",
+  "repeatType": "...",
+  "repeatInterval": 1,
+  "repeatEndDate": "..."
 }
 ```
+*Note for custom events: `repeatType` can be "NONE", "DAILY", "WEEKLY", "MONTHLY", "YEARLY", "CUSTOM_DAYS". `repeatInterval` is only used if type is "CUSTOM_DAYS". `repeatEndDate` is optional, use YYYY-MM-DD.*
 
 To DELETE a CLASS, output:
 ```json
@@ -139,12 +144,20 @@ To DELETE a MESS MENU, output:
 }
 ```
 
-To DELETE a SINGLE CUSTOM EVENT, output:
+To CANCEL a SPECIFIC INSTANCE of a recurring custom event (e.g. "cancel today's standup"), output:
+```json
+{
+  "intent": "cancel_custom_event_instance",
+  "eventName": "...",
+  "dateToCancel": "..."
+}
+```
+
+To DELETE an ENTIRE Custom Event series, output:
 ```json
 {
   "intent": "delete_custom_event",
-  "eventName": "...",
-  "date": "..."
+  "eventName": "..."
 }
 ```
 Do not output the JSON block until you have ALL info gathered!
@@ -187,7 +200,8 @@ Do not output the JSON block until you have ALL info gathered!
             }
 
             val customContext = if (customEvents.isEmpty()) "No custom events." else "Custom Events:\n" + customEvents.joinToString("\n") {
-                "- ${it.eventName} on ${it.date} from ${it.startTime} to ${it.endTime}"
+                val repeatContext = if (it.repeatType != "NONE") " (Repeats ${it.repeatType})" else ""
+                "- ${it.eventName}. Series Start Date: ${it.date}. Time: ${it.startTime} to ${it.endTime}$repeatContext"
             }
 
             val todayDate = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date())
@@ -339,12 +353,18 @@ Do not output the JSON block until you have ALL info gathered!
                                             val date = jsonObject.getString("date")
                                             val startTime = jsonObject.getString("startTime")
                                             val endTime = jsonObject.getString("endTime")
+                                            val repeatType = if (jsonObject.has("repeatType")) jsonObject.getString("repeatType") else "NONE"
+                                            val repeatInterval = if (jsonObject.has("repeatInterval")) jsonObject.getInt("repeatInterval") else 1
+                                            val repeatEndDate = if (jsonObject.has("repeatEndDate")) jsonObject.getString("repeatEndDate") else null
                                             
                                             val event = CustomEvent(
                                                 eventName = eventName,
                                                 date = date,
                                                 startTime = startTime,
-                                                endTime = endTime
+                                                endTime = endTime,
+                                                repeatType = repeatType,
+                                                repeatInterval = repeatInterval,
+                                                repeatEndDate = repeatEndDate
                                             )
                                             // Schedule alarm FIRST so it works even if AWS fails
                                             AlarmScheduler.scheduleAlarmsForCustomEvents(context, event)
@@ -354,14 +374,36 @@ Do not output the JSON block until you have ALL info gathered!
                                                 Log.e("ChatViewModel", "Failed to sync custom event to AWS", e)
                                             }
                                         }
+                                        "cancel_custom_event_instance" -> {
+                                            val eventName = jsonObject.getString("eventName")
+                                            val dateToCancel = jsonObject.getString("dateToCancel")
+                                            
+                                            try {
+                                                // Intuitively find the existing event by name so the AI doesn't have to guess the series start date
+                                                val existingEvent = awsService.getAllCustomEvents().find { it.eventName.equals(eventName, ignoreCase = true) }
+                                                if (existingEvent != null) {
+                                                    val seriesStartDate = existingEvent.date
+                                                    AlarmScheduler.cancelAlarmsForCustomEvents(context, existingEvent)
+                                                    awsService.cancelCustomEventInstance(eventName, seriesStartDate, dateToCancel)
+                                                    
+                                                    // Fetch the updated event and reschedule
+                                                    val updatedEvent = awsService.getCustomEvent(eventName, seriesStartDate)
+                                                    if (updatedEvent != null) {
+                                                        AlarmScheduler.scheduleAlarmsForCustomEvents(context, updatedEvent)
+                                                    }
+                                                }
+                                            } catch (e: Exception) {
+                                                Log.e("ChatViewModel", "Failed to cancel instance", e)
+                                            }
+                                        }
                                         "delete_custom_event" -> {
                                             val eventName = jsonObject.getString("eventName")
-                                            val date = jsonObject.getString("date")
-                                            val event = awsService.getCustomEvent(eventName, date)
+                                            // Find the event by name intuitively
+                                            val event = awsService.getAllCustomEvents().find { it.eventName.equals(eventName, ignoreCase = true) }
                                             if (event != null) {
                                                 AlarmScheduler.cancelAlarmsForCustomEvents(context, event)
                                                 try {
-                                                    awsService.deleteCustomEvent(eventName, date)
+                                                    awsService.deleteCustomEvent(event.eventName, event.date)
                                                 } catch (e: Exception) {
                                                     Log.e("ChatViewModel", "Failed to delete custom event from AWS", e)
                                                 }

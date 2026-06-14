@@ -257,62 +257,86 @@ object AlarmScheduler {
 
     fun scheduleAlarmsForCustomEvents(context: Context, event: CustomEvent) {
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        // Use h:mm to allow single-digit hours (e.g. 6:17 instead of 06:17)
         val timeFormat12 = SimpleDateFormat("h:mm a", Locale.getDefault())
         val timeFormat24 = SimpleDateFormat("H:mm", Locale.getDefault())
         val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
 
         try {
-            val date = dateFormat.parse(event.date) ?: return
+            val startDate = dateFormat.parse(event.date) ?: return
+            val endDate = event.repeatEndDate?.let { dateFormat.parse(it) } ?: Calendar.getInstance().apply { add(Calendar.MONTH, 6) }.time
             val timeDate = try { timeFormat12.parse(event.startTime) } catch (e: Exception) { null } 
                            ?: try { timeFormat24.parse(event.startTime) } catch (e: Exception) { null }
+            
             if (timeDate != null) {
-                val dateCal = Calendar.getInstance().apply { time = date }
                 val timeCal = Calendar.getInstance().apply { time = timeDate }
-                val eventStartCal = Calendar.getInstance().apply {
-                    set(Calendar.YEAR, dateCal.get(Calendar.YEAR))
-                    set(Calendar.MONTH, dateCal.get(Calendar.MONTH))
-                    set(Calendar.DAY_OF_MONTH, dateCal.get(Calendar.DAY_OF_MONTH))
-                    set(Calendar.HOUR_OF_DAY, timeCal.get(Calendar.HOUR_OF_DAY))
-                    set(Calendar.MINUTE, timeCal.get(Calendar.MINUTE))
-                    set(Calendar.SECOND, 0)
-                }
-                
-                val alarmCal = Calendar.getInstance().apply {
-                    timeInMillis = eventStartCal.timeInMillis
-                    add(Calendar.MINUTE, -15)
+                val currentCal = Calendar.getInstance().apply { time = startDate }
+                val endCal = Calendar.getInstance().apply { time = endDate }
+                val cancelledSet = event.cancelledDates.split(",").filter { it.isNotBlank() }.toSet()
+
+                // If no repeat, just run once
+                if (event.repeatType.equals("NONE", ignoreCase = true)) {
+                    endCal.time = currentCal.time
                 }
 
-                var triggerTime = alarmCal.timeInMillis
-                val now = System.currentTimeMillis()
+                while (currentCal.before(endCal) || currentCal.timeInMillis == endCal.timeInMillis) {
+                    val currentDateStr = dateFormat.format(currentCal.time)
+                    if (!cancelledSet.contains(currentDateStr)) {
+                        val eventStartCal = Calendar.getInstance().apply {
+                            set(Calendar.YEAR, currentCal.get(Calendar.YEAR))
+                            set(Calendar.MONTH, currentCal.get(Calendar.MONTH))
+                            set(Calendar.DAY_OF_MONTH, currentCal.get(Calendar.DAY_OF_MONTH))
+                            set(Calendar.HOUR_OF_DAY, timeCal.get(Calendar.HOUR_OF_DAY))
+                            set(Calendar.MINUTE, timeCal.get(Calendar.MINUTE))
+                            set(Calendar.SECOND, 0)
+                        }
+                        
+                        val alarmCal = Calendar.getInstance().apply {
+                            timeInMillis = eventStartCal.timeInMillis
+                            add(Calendar.MINUTE, -15)
+                        }
 
-                if (triggerTime <= now && eventStartCal.timeInMillis > now) {
-                    // Less than 15 mins away! Trigger in 2 seconds
-                    triggerTime = now + 2000
-                }
+                        var triggerTime = alarmCal.timeInMillis
+                        val now = System.currentTimeMillis()
 
-                if (triggerTime > now) {
-                    val intent = Intent(context, NotificationReceiver::class.java).apply {
-                        putExtra("COURSE_NAME", event.eventName)
-                        putExtra("LOCATION", event.startTime)
-                        putExtra("IS_CUSTOM", true)
+                        if (triggerTime <= now && eventStartCal.timeInMillis > now) {
+                            triggerTime = now + 2000
+                        }
+
+                        if (triggerTime > now) {
+                            val intent = Intent(context, NotificationReceiver::class.java).apply {
+                                putExtra("COURSE_NAME", event.eventName)
+                                putExtra("LOCATION", event.startTime)
+                                putExtra("IS_CUSTOM", true)
+                            }
+                            val requestCode = ("Custom${event.eventName}$currentDateStr".hashCode() + alarmCal.timeInMillis).toInt()
+                            val pendingIntent = PendingIntent.getBroadcast(
+                                context,
+                                requestCode,
+                                intent,
+                                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+                            )
+
+                            try {
+                                alarmManager.setExactAndAllowWhileIdle(
+                                    AlarmManager.RTC_WAKEUP,
+                                    triggerTime,
+                                    pendingIntent
+                                )
+                            } catch (e: SecurityException) {
+                                Log.e("AlarmScheduler", "Exact alarm permission missing", e)
+                            }
+                        }
                     }
-                    val requestCode = ("Custom${event.eventName}".hashCode() + alarmCal.timeInMillis).toInt()
-                    val pendingIntent = PendingIntent.getBroadcast(
-                        context,
-                        requestCode,
-                        intent,
-                        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-                    )
 
-                    try {
-                        alarmManager.setExactAndAllowWhileIdle(
-                            AlarmManager.RTC_WAKEUP,
-                            triggerTime,
-                            pendingIntent
-                        )
-                    } catch (e: SecurityException) {
-                        Log.e("AlarmScheduler", "Exact alarm permission missing", e)
+                    // Increment loop
+                    when (event.repeatType.uppercase()) {
+                        "NONE" -> break
+                        "DAILY" -> currentCal.add(Calendar.DAY_OF_YEAR, 1)
+                        "WEEKLY" -> currentCal.add(Calendar.DAY_OF_YEAR, 7)
+                        "MONTHLY" -> currentCal.add(Calendar.MONTH, 1)
+                        "YEARLY" -> currentCal.add(Calendar.YEAR, 1)
+                        "CUSTOM_DAYS" -> currentCal.add(Calendar.DAY_OF_YEAR, event.repeatInterval.takeIf { it > 0 } ?: 1)
+                        else -> break
                     }
                 }
             }
@@ -323,42 +347,63 @@ object AlarmScheduler {
 
     fun cancelAlarmsForCustomEvents(context: Context, event: CustomEvent) {
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        val timeFormat12 = SimpleDateFormat("hh:mm a", Locale.getDefault())
-        val timeFormat24 = SimpleDateFormat("HH:mm", Locale.getDefault())
+        val timeFormat12 = SimpleDateFormat("h:mm a", Locale.getDefault())
+        val timeFormat24 = SimpleDateFormat("H:mm", Locale.getDefault())
         val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
 
         try {
-            val date = dateFormat.parse(event.date) ?: return
+            val startDate = dateFormat.parse(event.date) ?: return
+            val endDate = event.repeatEndDate?.let { dateFormat.parse(it) } ?: Calendar.getInstance().apply { add(Calendar.MONTH, 6) }.time
             val timeDate = try { timeFormat12.parse(event.startTime) } catch (e: Exception) { null } 
                            ?: try { timeFormat24.parse(event.startTime) } catch (e: Exception) { null }
+            
             if (timeDate != null) {
-                val dateCal = Calendar.getInstance().apply { time = date }
                 val timeCal = Calendar.getInstance().apply { time = timeDate }
-                val alarmCal = Calendar.getInstance().apply {
-                    set(Calendar.YEAR, dateCal.get(Calendar.YEAR))
-                    set(Calendar.MONTH, dateCal.get(Calendar.MONTH))
-                    set(Calendar.DAY_OF_MONTH, dateCal.get(Calendar.DAY_OF_MONTH))
-                    set(Calendar.HOUR_OF_DAY, timeCal.get(Calendar.HOUR_OF_DAY))
-                    set(Calendar.MINUTE, timeCal.get(Calendar.MINUTE))
-                    set(Calendar.SECOND, 0)
-                    add(Calendar.MINUTE, -15)
+                val currentCal = Calendar.getInstance().apply { time = startDate }
+                val endCal = Calendar.getInstance().apply { time = endDate }
+
+                if (event.repeatType.equals("NONE", ignoreCase = true)) {
+                    endCal.time = currentCal.time
                 }
 
-                val intent = Intent(context, NotificationReceiver::class.java).apply {
-                    putExtra("COURSE_NAME", event.eventName)
-                    putExtra("LOCATION", event.startTime)
-                    putExtra("IS_CUSTOM", true)
+                while (currentCal.before(endCal) || currentCal.timeInMillis == endCal.timeInMillis) {
+                    val currentDateStr = dateFormat.format(currentCal.time)
+                    val eventStartCal = Calendar.getInstance().apply {
+                        set(Calendar.YEAR, currentCal.get(Calendar.YEAR))
+                        set(Calendar.MONTH, currentCal.get(Calendar.MONTH))
+                        set(Calendar.DAY_OF_MONTH, currentCal.get(Calendar.DAY_OF_MONTH))
+                        set(Calendar.HOUR_OF_DAY, timeCal.get(Calendar.HOUR_OF_DAY))
+                        set(Calendar.MINUTE, timeCal.get(Calendar.MINUTE))
+                        set(Calendar.SECOND, 0)
+                    }
+                    val alarmCal = Calendar.getInstance().apply {
+                        timeInMillis = eventStartCal.timeInMillis
+                        add(Calendar.MINUTE, -15)
+                    }
+
+                    val intent = Intent(context, NotificationReceiver::class.java)
+                    val requestCode = ("Custom${event.eventName}$currentDateStr".hashCode() + alarmCal.timeInMillis).toInt()
+                    val pendingIntent = PendingIntent.getBroadcast(
+                        context,
+                        requestCode,
+                        intent,
+                        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_NO_CREATE
+                    )
+
+                    if (pendingIntent != null) {
+                        alarmManager.cancel(pendingIntent)
+                    }
+
+                    when (event.repeatType.uppercase()) {
+                        "NONE" -> break
+                        "DAILY" -> currentCal.add(Calendar.DAY_OF_YEAR, 1)
+                        "WEEKLY" -> currentCal.add(Calendar.DAY_OF_YEAR, 7)
+                        "MONTHLY" -> currentCal.add(Calendar.MONTH, 1)
+                        "YEARLY" -> currentCal.add(Calendar.YEAR, 1)
+                        "CUSTOM_DAYS" -> currentCal.add(Calendar.DAY_OF_YEAR, event.repeatInterval.takeIf { it > 0 } ?: 1)
+                        else -> break
+                    }
                 }
-                val requestCode = ("Custom${event.eventName}".hashCode() + alarmCal.timeInMillis).toInt()
-                
-                val pendingIntent = PendingIntent.getBroadcast(
-                    context,
-                    requestCode,
-                    intent,
-                    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-                )
-                alarmManager.cancel(pendingIntent)
-                pendingIntent.cancel()
             }
         } catch (e: Exception) {
             Log.e("AlarmScheduler", "Error canceling custom event alarm", e)
