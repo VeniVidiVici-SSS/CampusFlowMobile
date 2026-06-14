@@ -10,7 +10,8 @@ CampusFlow is not just a chat wrapper. It is a deeply integrated native Android 
 
 ## ✨ Key Features
 
-- **Multimodal AI File Parsing**: The app leverages Gemini 1.5's multimodal vision engine alongside Apache POI and native Android `PdfRenderer`. You can upload `.xlsx`, `.csv`, `.docx`, `.pptx`, `.pdf`, or even just a `.jpg` screenshot of your timetable. The AI will "see" it, intuitively parse the schedule, ask conversational follow-up questions if details are missing, and generate the schedule automatically.
+- **In-Context RAG Document Q&A**: The app leverages the massive token context window of the Gemini 2.0 architecture alongside native Android `PdfRenderer` and Apache POI. You can upload `.xlsx`, `.csv`, `.docx`, `.pptx`, `.pdf`, or even `.jpg` files. If it's a timetable, the AI extracts the schedule. If it's a 20-page syllabus or lecture notes, you can ask endless follow-up questions and the AI will act as a conversational tutor with perfect semantic recall.
+- **Smart Bin-Packing Task Scheduler**: Provide a list of tasks and their durations (e.g., *"Schedule 2 hours of math and 1 hr of reading today"*). A native Android backend algorithm computes your strict time boundaries, and the AI actively bin-packs your tasks into the empty gaps of your day without overlaps. If it doesn't fit, it will conversationally suggest alternatives.
 - **Intuitive NLP CRUD Operations**: Complete Create, Read, Update, and Delete control over your classes, mess menus, and custom recurring events using purely natural language. Tell the AI: *"Actually, shift my Saturday DSA class to Sunday at 5 PM,"* and it handles the complex database transactions seamlessly without asking rigid formatting questions.
 - **AWS Cloud Synchronization**: Fully integrated with AWS DynamoDB for NoSQL database management and AWS S3 for secure file/schedule storage. Your data is persistently backed up to the cloud.
 - **Automated Push Notifications & Recurrence**: The app mathematically intercepts structured JSON intents from the AI to configure native Android `AlarmManager` alerts. It supports complex recurrences (Daily, Weekly, Monthly) and will automatically ping you exactly 15 minutes before your events begin.
@@ -22,7 +23,7 @@ CampusFlow is not just a chat wrapper. It is a deeply integrated native Android 
 
 - **Frontend**: Kotlin, Jetpack Compose, Material Design 3
 - **Cloud/Backend**: AWS DynamoDB, AWS S3
-- **AI Engine**: Google Generative AI SDK (Gemini 1.5 Flash/Pro multimodal family)
+- **AI Engine**: Google Generative AI SDK (Gemini 2.0 and 3.1 multimodal family)
 - **Background Tasks**: Android `AlarmManager`, `BroadcastReceiver`
 - **File Parsing**: Apache POI (Word, PPT, Excel), Android `PdfRenderer`, Android `Bitmap`
 
@@ -49,4 +50,9 @@ CampusFlow is not just a chat wrapper. It is a deeply integrated native Android 
      AWS_REGION="ap-south-1"
      AWS_S3_BUCKET_NAME="your_bucket_name"
      ```
-3. Sync Gradle and run the app on an Android Emulator or physical device (Android 13+ recommended for notification permissions).
+3. Configure your AWS DynamoDB backend:
+   - Create the following three tables in your AWS Console (they are not auto-created):
+   - **`CampusFlow_Classes`** -> Partition Key: `courseName` (String) | Sort Key: `dayOfWeek` (String)
+   - **`CampusFlow_MessMenu`** -> Partition Key: `mealType` (String) | Sort Key: `dayOfWeek` (String)
+   - **`CampusFlow_CustomEvents`** -> Partition Key: `eventName` (String) | Sort Key: `date` (String)
+4. Sync Gradle and run the app on an Android Emulator or physical device (Android 13+ recommended for notification permissions).
