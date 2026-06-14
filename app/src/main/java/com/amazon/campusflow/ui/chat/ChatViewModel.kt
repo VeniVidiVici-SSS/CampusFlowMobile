@@ -303,7 +303,9 @@ Do not output the JSON block until you have ALL info gathered!
                     val chat = getOrCreateChatSession()
                     
                     if (retries == 0) {
-                        val displayMsg = if (extractedDoc != null) "Uploaded a file." else text.trim()
+                        val displayMsg = if (extractedDoc != null) {
+                            if (text.isNotBlank()) "${text.trim()}\n[File Attached]" else "Uploaded a file."
+                        } else text.trim()
                         val userMsg = ChatMessage(text = displayMsg, isFromUser = true)
                         dao.insertMessage(userMsg)
                     }
@@ -314,7 +316,12 @@ Do not output the JSON block until you have ALL info gathered!
                         val timePrefix = "[System Note: The current exact date is $todayDate and the current time is $currentTime]\n\n"
 
                         if (extractedDoc != null) {
-                            text(timePrefix + "The user has uploaded a file. If this contains a schedule, please intuitively extract all events and output the appropriate schedule JSON blocks for each. If you cannot determine necessary details like the end date, DO NOT output JSON; instead, ask the user. ")
+                            val contextIntro = if (text.isNotBlank()) {
+                                "The user has uploaded a file with the following query: \"${text.trim()}\". If the query asks a question about the document, answer it conversationally. If the query or document implies scheduling, extract the events as JSON."
+                            } else {
+                                "The user has uploaded a file. If this document is a schedule or timetable, please intuitively extract all events and output the appropriate schedule JSON blocks. If it is a general document (like a syllabus, assignment, or notes), DO NOT attempt to extract a schedule. Instead, briefly summarize the document and tell the user you are ready to answer any questions about it."
+                            }
+                            text(timePrefix + contextIntro)
                             when (extractedDoc) {
                                 is com.amazon.campusflow.utils.ExtractedDocument.Text -> text("File contents:\n${extractedDoc.content}")
                                 is com.amazon.campusflow.utils.ExtractedDocument.Images -> extractedDoc.bitmaps.forEach { image(it) }
